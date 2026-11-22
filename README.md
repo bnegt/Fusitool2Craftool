@@ -209,6 +209,23 @@ python3 -m unittest discover -s tests -t .
 Put your own Fusion library in `private/` (git-ignored); the tests then also
 check that every tool in it converts and that the output verifies.
 
+### CamCraft upstream check
+
+The first tests to run (`tests/test_camcraft_upstream.py`) ask GitHub whether
+CamCraft can now handle the tools we skip
+([#1](https://github.com/bnegt/Fusitool2Craftool/issues/1)):
+
+- CamCraft issues [#895](https://github.com/NeoTech/Camcraft/issues/895)
+  (tapered ball mills, V-bit tip diameter) and
+  [#896](https://github.com/NeoTech/Camcraft/issues/896) (roundover bits)
+  are still open
+- CamCraft's list of tool kinds is unchanged
+
+If either fails, CamCraft has changed: update the converter, then update
+`BLOCKING_ISSUES` / `KNOWN_KINDS` in that test. Offline (or rate-limited) the
+check is skipped; `F2C_OFFLINE=1` skips it on purpose, and `GITHUB_TOKEN`
+raises GitHub's rate limit.
+
 | Module | Role |
 |---|---|
 | `fusion.py` | read `.tools` (zip or plain JSON) and `.json` libraries |
