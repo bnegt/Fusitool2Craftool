@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fusitool2craftool"
+dynamic = ["version"]
+description = "Convert Fusion 360 tool libraries to CamCraft tool libraries (.camtools)"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+fusitool2craftool = "fusitool2craftool.cli:main"
+
+[tool.setuptools]
+packages = ["fusitool2craftool"]
+
+[tool.setuptools.dynamic]
+version = { attr = "fusitool2craftool.__version__" }

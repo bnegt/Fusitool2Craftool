@@ -221,3 +221,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Personal Fusion tool library (sanity check only, never committed)
+1335.tools
+private/
