@@ -350,6 +350,85 @@ class SkipCategoryTests(unittest.TestCase):
         self.assertIn("\033[31mskipped [tapered ball mill]", text)
 
 
+class DefaultSpeedTests(unittest.TestCase):
+    """#8: per-kind and per-diameter defaults for tools Fusion gives no speed."""
+
+    def bare(self, type_="flat end mill", dc=6, nof=2, **geometry):
+        return tool(type_, presets=[], geometry={"DC": dc, "NOF": nof, **geometry})
+
+    def test_vc_and_fz(self):
+        d, result = one(self.bare(dc=10, nof=3), Options(default_vc=100, default_fz=0.05))
+        self.assertAlmostEqual(d["rpm"], 100 * 1000 / (math.pi * 10), places=4)   # 3183.1
+        self.assertAlmostEqual(d["feed"], d["rpm"] * 3 * 0.05, places=3)
+        self.assertEqual(sorted(result.defaults), ["feed from --default-fz 0.05", "rpm from --default-vc 100 m/min"])
+
+    def test_max_rpm_caps_computed_rpm_only(self):
+        d, result = one(self.bare(dc=0.2), Options(default_vc=200, default_fz=0.005, max_rpm=24000))
+        self.assertEqual(d["rpm"], 24000)
+        self.assertAlmostEqual(d["feed"], 24000 * 2 * 0.005)
+        self.assertIn("rpm from --default-vc 200 m/min, capped at --max-rpm", result.defaults)
+        d, _ = one(self.bare(), Options(default_rpm=30000, default_feed=500, max_rpm=24000))
+        self.assertEqual(d["rpm"], 30000)  # an explicit rpm is what was asked for
+
+    def test_kind_beats_global_and_explicit_beats_formula(self):
+        options = Options(default_rpm=18000, default_feed=1000, default_vc=150, default_fz=0.04,
+                          kind_defaults={"drill": {"vc": 60, "feed": 150}})
+        d, _ = one(self.bare("drill", dc=8, SIG=118), options)
+        self.assertAlmostEqual(d["rpm"], 60 * 1000 / (math.pi * 8), places=4)  # kind v_c beats global rpm
+        self.assertEqual(d["feed"], 150)
+        d, _ = one(self.bare(dc=8), options)
+        self.assertEqual((d["rpm"], d["feed"]), (18000, 1000))  # global rpm/feed beat global v_c/f_z
+
+    def test_slitting_saw_uses_all_its_teeth(self):
+        e = self.bare("slot mill", dc=19.05, nof=72, LCF=0.5, SFDM=6.35, LB=7)
+        d, _ = one(e, Options(default_vc=60, default_fz=0.005))
+        self.assertNotIn("flutes", d)  # CamCraft's flute field stops at 32
+        self.assertAlmostEqual(d["feed"], d["rpm"] * 72 * 0.005, places=3)
+
+    def test_fz_without_flute_count_is_named(self):
+        r = convert([self.bare(nof=None)], Options(default_rpm=18000, default_fz=0.02))
+        self.assertIn("no flute count for --default-fz", r.skipped[0].reason)
+
+    def test_tap_still_feeds_pitch(self):
+        d, _ = one(self.bare("tap right hand", dc=8, TP=1.25), Options(default_vc=10, default_feed=999))
+        self.assertAlmostEqual(d["feed"], d["rpm"] * 1.25, places=3)
+
+    def test_bad_defaults_refused(self):
+        with self.assertRaisesRegex(ValueError, "unknown tool kind 'drlil'"):
+            convert([], Options(kind_defaults={"drlil": {"rpm": 3000}}))
+        with self.assertRaisesRegex(ValueError, "must be over 0"):
+            convert([], Options(default_vc=-5))
+
+    def test_check_catches_a_wrong_default(self):
+        result = convert([self.bare(dc=10)], Options(default_vc=100, default_fz=0.05))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = camtools.write(result, Path(tmp) / "out.camtools")
+            self.assertEqual(verify_file(path, result), [])
+            doc = json.loads(path.read_text())
+            doc["tools"][0]["definition"]["rpm"] = 4000  # not what v_c 100 on D10 gives
+            path.write_text(json.dumps(doc))
+            self.assertTrue(any("no Fusion preset or default" in p for p in verify_file(path, result)))
+
+    def test_cli_kind_values_and_summary(self):
+        lib = {"data": [self.bare("drill", dc=8, SIG=118), self.bare(dc=6)]}
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "lib.json"
+            src.write_text(json.dumps(lib))
+            out = io.StringIO()
+            with redirect_stdout(out), redirect_stderr(io.StringIO()):
+                code = main([str(src), "--default-rpm", "18000", "--default-rpm", "drill=3000",
+                             "--default-feed", "drill=150", "--default-fz", "0.03"])
+            self.assertEqual(code, 0)
+            doc = json.loads(src.with_suffix(".camtools").read_text())
+            drill = next(t["definition"] for t in doc["tools"] if t["definition"]["kind"] == "drill")
+            self.assertEqual((drill["rpm"], drill["feed"]), (3000, 150))
+            self.assertIn("defaults: 1 tool got rpm from --default-rpm drill=3000", out.getvalue())
+            err = io.StringIO()
+            with redirect_stdout(io.StringIO()), redirect_stderr(err):
+                self.assertEqual(main([str(src), "--default-vc", "drill=fast"]), 1)
+            self.assertIn("expected a number or KIND=number", err.getvalue())
+
+
 class PresetRowTests(unittest.TestCase):
     """--all-presets: one cutting data row per preset naming a material."""
 

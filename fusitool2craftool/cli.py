@@ -9,7 +9,7 @@ from collections import Counter
 from pathlib import Path
 
 from . import __version__, camtools
-from .convert import MATERIALS, RELEASED_MATERIALS, UNRELEASED_MATERIALS, Options, convert
+from .convert import DEFAULT_KINDS, MATERIALS, RELEASED_MATERIALS, UNRELEASED_MATERIALS, Options, convert
 from .fusion import FusionLibraryError, load_library
 from .push import MODES, PushError, push
 from .verify import verify_file
@@ -71,10 +71,21 @@ def build_parser() -> argparse.ArgumentParser:
                       help="holder diameter for tools without a Fusion holder (default 50)")
     conv.add_argument("--holder-len", type=float, default=40.0, metavar="MM",
                       help="holder length for tools without a Fusion holder (default 40)")
-    conv.add_argument("--default-rpm", type=float, metavar="RPM",
-                      help="spindle speed for tools without a preset (otherwise they are skipped)")
-    conv.add_argument("--default-feed", type=float, metavar="MM_MIN",
-                      help="feed in mm/min for tools without a preset (otherwise they are skipped)")
+    dflt = p.add_argument_group(
+        "defaults for tools Fusion gives no speed or feed",
+        "Each takes a number for every tool, or KIND=number for one CamCraft kind "
+        f"({', '.join(DEFAULT_KINDS)}); repeat for several kinds. A kind's own default "
+        "beats the global one; an explicit rpm/feed beats --default-vc/--default-fz.")
+    dflt.add_argument("--default-rpm", action="append", default=[], metavar="[KIND=]RPM",
+                      help="spindle speed, e.g. 18000 or drill=3000")
+    dflt.add_argument("--default-feed", action="append", default=[], metavar="[KIND=]MM_MIN",
+                      help="feed in mm/min, e.g. 1000 or drill=150")
+    dflt.add_argument("--default-vc", action="append", default=[], metavar="[KIND=]M_MIN",
+                      help="cutting speed in m/min: rpm = v_c x 1000 / (pi x D)")
+    dflt.add_argument("--default-fz", action="append", default=[], metavar="[KIND=]MM",
+                      help="chip load in mm per tooth: feed = rpm x flutes x f_z (needs Fusion's flute count)")
+    dflt.add_argument("--max-rpm", type=float, metavar="RPM",
+                      help="cap for an rpm computed from --default-vc (your spindle's maximum)")
     conv.add_argument("--strict", action="store_true",
                       help="fail instead of skipping tools that cannot be converted")
 
@@ -93,13 +104,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    try:
+        defaults = parse_defaults(args)
+    except ValueError as e:
+        print(red(f"error: {e}"), file=sys.stderr)
+        return 1
     options = Options(
+        **defaults,
         preset=args.preset,
         material=args.material,
         holder_d=args.holder_d,
         holder_len=args.holder_len,
-        default_rpm=args.default_rpm,
-        default_feed=args.default_feed,
         all_presets=args.all_presets,
         unreleased_materials=args.unreleased_materials,
     )
@@ -112,6 +127,24 @@ def main(argv: list[str] | None = None) -> int:
         return convert_folder(args, options)
     output = args.output or args.input.with_suffix(camtools.EXTENSION)
     return 0 if convert_file(args.input, output, args, options) in (OK, EMPTY) else 1
+
+
+def parse_defaults(args) -> dict:
+    """--default-rpm/feed/vc/fz values ("1000" or "drill=150") as Options fields."""
+    out: dict = {"kind_defaults": {}, "max_rpm": args.max_rpm}
+    for field in ("rpm", "feed", "vc", "fz"):
+        for text in getattr(args, f"default_{field}"):
+            kind, _, value = text.rpartition("=")
+            kind = kind.strip().lower()
+            try:
+                number = float(value)
+            except ValueError:
+                raise ValueError(f"--default-{field} {text!r}: expected a number or KIND=number") from None
+            if kind:
+                out["kind_defaults"].setdefault(kind, {})[field] = number
+            else:
+                out[f"default_{field}"] = number
+    return out
 
 
 def library_files(folder: Path) -> list[Path]:
@@ -187,6 +220,8 @@ def convert_file(src: Path, output: Path, args, options: Options, quiet_empty: b
                   f"so they are skipped"), file=sys.stderr)
     if options.all_presets:
         print_preset_report(result.presets)
+    for how, n in sorted(result.defaults.items(), key=lambda kv: (-kv[1], kv[0])):
+        print(f"defaults: {n} {plural('tool', n)} got {how}")
     if result.holders:
         print(f"{result.holders} {plural('holder', result.holders)} not converted "
               f"(CamCraft imports no stand-alone holders; a tool's own holder is kept as its holder size)")
