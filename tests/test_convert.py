@@ -111,6 +111,43 @@ class ConvertTests(unittest.TestCase):
         d, _ = one(tool(presets=[]), Options(default_rpm=10000, default_feed=800))
         self.assertEqual((d["rpm"], d["feed"]), (10000, 800))
 
+    def test_legacy_star_start_values(self):
+        # format-version-1 libraries: one unnamed set under "*", no presets list
+        e = tool(unit="inches", geometry={"DC": 0.25, "LCF": 0.5, "LB": 1})
+        e["start-values"] = {"*": {"n": 5000, "v_f": 39.3701, "f_z": 0.0039}}
+        d, result = one(e)
+        self.assertEqual(d["rpm"], 5000)
+        self.assertAlmostEqual(d["feed"], 1000.0, places=2)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = camtools.write(result, Path(tmp) / "out.camtools")
+            self.assertEqual(verify_file(path, result), [])
+
+    def test_drill_feed_from_plunge_or_feed_per_rev(self):
+        # Fusion leaves a drill's v_f at 0 and keeps its feed in v_f_plunge or f_n
+        d, _ = one(tool("drill", geometry={"SIG": 118},
+                        presets=[{"name": "P", "n": 3000, "v_f": 0, "v_f_plunge": 20}]))
+        self.assertEqual(d["feed"], 20)
+        d, result = one(tool("drill", unit="inches", geometry={"DC": 0.25, "LCF": 1, "LB": 2, "SIG": 118},
+                             presets=[{"name": "P", "n": 2000, "f_n": 0.003}]))
+        self.assertAlmostEqual(d["feed"], 0.003 * 2000 * 25.4)
+        self.assertTrue(any("f_n x n" in w for w in result.warnings))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = camtools.write(result, Path(tmp) / "out.camtools")
+            self.assertEqual(verify_file(path, result), [])
+
+    def test_tap_feed_is_rpm_times_pitch(self):
+        e = tool("tap right hand", geometry={"TP": 1.25, "DC": 8},
+                 presets=[{"name": "P", "n": 500, "v_f": 0, "v_f_plunge": 0}])
+        d, result = one(e)
+        self.assertEqual(d["feed"], 625)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = camtools.write(result, Path(tmp) / "out.camtools")
+            self.assertEqual(verify_file(path, result), [])
+
+    def test_mill_without_v_f_still_skipped(self):
+        r = convert([tool(presets=[{"name": "P", "n": 3000, "v_f": 0, "v_f_plunge": 300}])])
+        self.assertIn("no cutting feed", r.skipped[0].reason)
+
     def test_preset_by_name_and_material(self):
         presets = [{"name": "Rough", "n": 1000, "v_f": 100}, {"name": "Finish", "n": 2000, "v_f": 200}]
         d, result = one(tool(presets=presets), Options(preset="finish", material="brass"))
@@ -184,6 +221,28 @@ class SkipCategoryTests(unittest.TestCase):
         ])
         self.assertEqual(sorted(s.category for s in r.skipped), ["roundover bit", "tapered ball mill"])
 
+    def test_reamer_counterbore_form_mill_named(self):
+        r = convert([tool("reamer"), tool("counter bore"), tool("form mill"), tool("probe")])
+        self.assertEqual([s.category for s in r.skipped], ["reamer", "counterbore", "form mill", None])
+
+    def test_holder_only_library_is_not_an_error(self):
+        lib = {"data": [{"type": "holder", "description": "BT30 ER32"}, {"type": "holder"}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "holders.json"
+            src.write_text(json.dumps(lib))
+            out = io.StringIO()
+            with redirect_stdout(out), redirect_stderr(io.StringIO()):
+                self.assertEqual(main([str(src)]), 0)
+            self.assertIn("2 holders not converted", out.getvalue())
+            self.assertFalse(src.with_suffix(".camtools").exists())
+
+    def test_all_tools_skipped_is_still_an_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "lib.json"
+            src.write_text(json.dumps({"data": [tool("reamer")]}))
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                self.assertEqual(main([str(src)]), 1)
+
     def test_cli_prints_red_skip_summary(self):
         lib = {"data": [tool("tapered mill", geometry={"RE": 0.5}), tool()]}
         with tempfile.TemporaryDirectory() as tmp:
@@ -196,6 +255,71 @@ class SkipCategoryTests(unittest.TestCase):
         text = err.getvalue()
         self.assertIn("\033[31mNOT IMPORTED: 1 tapered ball mill", text)
         self.assertIn("\033[31mskipped [tapered ball mill]", text)
+
+
+class FolderTests(unittest.TestCase):
+    """A folder of libraries, as ExportAllToolLibraries writes it."""
+
+    def make_export(self, tmp):
+        root = Path(tmp) / "export"
+        (root / "Local").mkdir(parents=True)
+        (root / "Cloud" / "Shop").mkdir(parents=True)
+        (root / "Local" / "Mills.json").write_text(json.dumps({"data": [tool(description="A")]}))
+        (root / "Cloud" / "Shop" / "Drills.json").write_text(
+            json.dumps({"data": [tool("drill", description="D", geometry={"SIG": 118})]}))
+        (root / "Cloud" / "Holders.json").write_text(json.dumps({"data": [{"type": "holder"}]}))
+        (root / "export-log.txt").write_text("exported 3 libraries, 0 failed\n")
+        return root
+
+    def run_main(self, argv):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = main(argv)
+        return code, out.getvalue(), err.getvalue()
+
+    def test_converts_every_library_next_to_its_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.make_export(tmp)
+            code, out, err = self.run_main([str(root)])
+            self.assertEqual(code, 0, err)
+            self.assertTrue((root / "Local" / "Mills.camtools").exists())
+            self.assertTrue((root / "Cloud" / "Shop" / "Drills.camtools").exists())
+            self.assertFalse((root / "Cloud" / "Holders.camtools").exists())
+            self.assertIn("3 libraries: 2 converted, 1 without convertible tools, 0 failed", out)
+            # a second run does not pick up its own .camtools output
+            self.assertEqual(self.run_main([str(root)])[0], 0)
+
+    def test_output_folder_mirrors_subfolders(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.make_export(tmp)
+            dest = Path(tmp) / "camtools"
+            code, _, err = self.run_main([str(root), "-o", str(dest)])
+            self.assertEqual(code, 0, err)
+            self.assertEqual(
+                sorted(p.relative_to(dest).as_posix() for p in dest.rglob("*.camtools")),
+                ["Cloud/Shop/Drills.camtools", "Local/Mills.camtools"])
+            self.assertFalse(list(root.rglob("*.camtools")))
+
+    def test_bad_library_fails_the_run_but_others_convert(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.make_export(tmp)
+            (root / "Local" / "Broken.json").write_text("not json")
+            code, out, err = self.run_main([str(root)])
+            self.assertEqual(code, 1)
+            self.assertIn("1 failed", err)
+            self.assertTrue((root / "Local" / "Mills.camtools").exists())
+
+    def test_push_refused_for_a_folder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            code, _, err = self.run_main([str(self.make_export(tmp)), "--push", "7777"])
+            self.assertEqual(code, 1)
+            self.assertIn("one library at a time", err)
+
+    def test_empty_folder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            code, _, err = self.run_main([tmp])
+            self.assertEqual(code, 1)
+            self.assertIn("no .json or .tools files", err)
 
 
 class VerifyTests(unittest.TestCase):
@@ -229,19 +353,37 @@ class VerifyTests(unittest.TestCase):
             self.assertTrue(any("holds 1 tools, expected 2" in p for p in verify_file(path, result)))
 
 
-@unittest.skipUnless((PRIVATE / "1335.tools").exists(), "private library not present")
-class PrivateLibraryTests(unittest.TestCase):
-    """Sanity check against the owner's own Fusion library (git-ignored)."""
+def _private_libraries() -> list[Path]:
+    from fusitool2craftool.cli import library_files
+    return library_files(PRIVATE) if PRIVATE.is_dir() else []
 
-    def test_every_tool_converts(self):
-        result = convert(load_library(PRIVATE / "1335.tools"))
-        self.assertEqual(result.skipped, [])
-        self.assertTrue(result.tools)
-        for t in result.tools:
-            self.assertIsNone(why_not_sane(t["definition"]), t["name"])
-        with tempfile.TemporaryDirectory() as tmp:
-            path = camtools.write(result, Path(tmp) / "1335.camtools")
-            self.assertEqual(verify_file(path, result), [])
+
+# Third-party libraries (see TEST_LIBRARIES.md): they may hold
+# tool types we do not map yet, so only conversion and verification count.
+THIRD_PARTY = PRIVATE / "test-libraries"
+
+
+@unittest.skipUnless(_private_libraries(), "no Fusion libraries in private/")
+class PrivateLibraryTests(unittest.TestCase):
+    """Every Fusion library under private/ (git-ignored): each converts,
+    passes CamCraft's sanity rules and verifies. In the owner's own
+    libraries (anything outside test-libraries/) a skipped tool must also
+    be a named unsupported family."""
+
+    def test_every_library_converts_and_verifies(self):
+        for src in _private_libraries():
+            with self.subTest(library=str(src.relative_to(PRIVATE))):
+                result = convert(load_library(src))
+                if not src.is_relative_to(THIRD_PARTY):
+                    unexplained = [f"{s.name}: {s.reason}" for s in result.skipped if not s.category]
+                    self.assertEqual(unexplained, [])
+                if not result.tools:
+                    continue  # holder-only / empty library
+                for t in result.tools:
+                    self.assertIsNone(why_not_sane(t["definition"]), t["name"])
+                with tempfile.TemporaryDirectory() as tmp:
+                    path = camtools.write(result, Path(tmp) / "out.camtools")
+                    self.assertEqual(verify_file(path, result), [])
 
 
 if __name__ == "__main__":

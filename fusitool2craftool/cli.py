@@ -14,6 +14,11 @@ from .fusion import FusionLibraryError, load_library
 from .push import MODES, PushError, push
 from .verify import verify_file
 
+LIBRARY_SUFFIXES = (".json", ".tools")
+
+# convert_file outcomes: written and verified / nothing to write / error
+OK, EMPTY, FAILED = "ok", "empty", "failed"
+
 
 def _color_on(stream) -> bool:
     if os.environ.get("NO_COLOR"):
@@ -41,9 +46,12 @@ def build_parser() -> argparse.ArgumentParser:
         description="Convert a Fusion 360 tool library (.tools/.json) to a CamCraft "
         "tool library (.camtools), and optionally import it into a running CamCraft.",
     )
-    p.add_argument("input", type=Path, help="Fusion 360 tool library (.tools or .json)")
+    p.add_argument("input", type=Path,
+                   help="Fusion 360 tool library (.tools or .json), or a folder of them "
+                   "(e.g. the ExportAllToolLibraries export; searched recursively)")
     p.add_argument("-o", "--output", type=Path,
-                   help="output .camtools file (default: next to the input)")
+                   help="output .camtools file (default: next to the input); for a folder "
+                   "input, an output folder that gets the same subfolders")
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
 
     conv = p.add_argument_group("conversion")
@@ -85,11 +93,55 @@ def main(argv: list[str] | None = None) -> int:
         default_rpm=args.default_rpm,
         default_feed=args.default_feed,
     )
+    if args.input.is_dir():
+        return convert_folder(args, options)
+    output = args.output or args.input.with_suffix(camtools.EXTENSION)
+    return 0 if convert_file(args.input, output, args, options) in (OK, EMPTY) else 1
+
+
+def library_files(folder: Path) -> list[Path]:
+    """Fusion library files under ``folder`` (recursive, sorted, hidden files left out)."""
+    return sorted(
+        p for p in folder.rglob("*")
+        if p.is_file() and p.suffix.lower() in LIBRARY_SUFFIXES and not p.name.startswith(".")
+    )
+
+
+def convert_folder(args, options: Options) -> int:
+    if args.push is not None:
+        print(red("error: --push takes one library at a time (tools with the same name or "
+                  "T number in two libraries would overwrite each other); push the .camtools "
+                  "files one by one"), file=sys.stderr)
+        return 1
+    files = library_files(args.input)
+    if not files:
+        print(red(f"error: no .json or .tools files in {args.input}"), file=sys.stderr)
+        return 1
+    out_root = args.output
+    counts = Counter()
+    for src in files:
+        rel = src.relative_to(args.input)
+        output = (out_root / rel if out_root else src).with_suffix(camtools.EXTENSION)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        print(f"== {rel}")
+        counts[convert_file(src, output, args, options, quiet_empty=True)] += 1
+    summary = (f"{len(files)} {'library' if len(files) == 1 else 'libraries'}: "
+               f"{counts[OK]} converted, {counts[EMPTY]} without convertible tools, "
+               f"{counts[FAILED]} failed")
+    if counts[FAILED]:
+        print(red(f"error: {summary}"), file=sys.stderr)
+        return 1
+    print(green(summary))
+    return 0
+
+
+def convert_file(src: Path, output: Path, args, options: Options, quiet_empty: bool = False) -> str:
+    """Convert, write, verify (and optionally check/push) one library."""
     try:
-        entries = load_library(args.input)
+        entries = load_library(src)
     except FusionLibraryError as e:
         print(red(f"error: {e}"), file=sys.stderr)
-        return 1
+        return FAILED
 
     result = convert(entries, options)
     for w in result.warnings:
@@ -102,14 +154,23 @@ def main(argv: list[str] | None = None) -> int:
         listed = ", ".join(f"{n} {plural(cat, n)}" for cat, n in sorted(families.items()))
         print(red(f"NOT IMPORTED: {listed} - CamCraft has no tool type for them, "
                   f"so they are skipped"), file=sys.stderr)
+    if result.holders:
+        print(f"{result.holders} {plural('holder', result.holders)} not converted "
+              f"(CamCraft imports no stand-alone holders; a tool's own holder is kept as its holder size)")
     if args.strict and result.skipped:
         print(red(f"error: {len(result.skipped)} tool(s) could not be converted (--strict)"), file=sys.stderr)
-        return 1
+        return FAILED
     if not result.tools:
+        if not result.input_tools:
+            # a holder library (or an empty one): nothing to convert, not an error
+            print(f"no tools in {src.name} - nothing written")
+            return EMPTY
+        if quiet_empty:
+            print(f"no convertible tools in {src.name} (all skipped) - nothing written")
+            return EMPTY
         print(red("error: no tools could be converted"), file=sys.stderr)
-        return 1
+        return FAILED
 
-    output = args.output or args.input.with_suffix(camtools.EXTENSION)
     written = camtools.write(result, output)
     print(f"wrote {len(result.tools)} tool(s) to {written}"
           + (f" ({len(result.skipped)} skipped)" if result.skipped else ""))
@@ -120,7 +181,7 @@ def main(argv: list[str] | None = None) -> int:
             print(red(f"mismatch: {p}"), file=sys.stderr)
         print(red(f"error: {written} does not match the Fusion library "
                   f"({len(problems)} problem(s)) - do not import it"), file=sys.stderr)
-        return 1
+        return FAILED
     print(green(f"verified: all {len(result.tools)} tool(s) in {written.name} match the Fusion data"))
 
     if args.check:
@@ -128,7 +189,7 @@ def main(argv: list[str] | None = None) -> int:
             summary = push(written, None, mode="add", cli=args.camcraft_cli)
         except PushError as e:
             print(red(f"error: CamCraft check failed: {e}"), file=sys.stderr)
-            return 1
+            return FAILED
         print(f"CamCraft accepts the file: {summary}")
 
     if args.push is not None:
@@ -136,9 +197,9 @@ def main(argv: list[str] | None = None) -> int:
             summary = push(written, args.push, host=args.host, mode=args.mode, cli=args.camcraft_cli)
         except PushError as e:
             print(red(f"error: {e}"), file=sys.stderr)
-            return 1
+            return FAILED
         print(f"imported into CamCraft ({args.mode}): {summary}")
-    return 0
+    return OK
 
 
 if __name__ == "__main__":

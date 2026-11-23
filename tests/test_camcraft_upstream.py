@@ -1,8 +1,8 @@
 """Watch CamCraft for the tool types this converter is waiting on.
 
 Runs first in the suite (alphabetical order). It asks GitHub whether the
-CamCraft issues that block tapered ball mills and roundover bits are still
-open, and whether CamCraft's tool kinds changed. When one fails, CamCraft
+CamCraft issues that block the tool types we skip (tapered, roundover,
+reamer, counterbore) are still open, and whether CamCraft's tool kinds changed. When one fails, CamCraft
 may now support tools we skip: see
 https://github.com/bnegt/Fusitool2Craftool/issues/1
 
@@ -24,6 +24,8 @@ TRACKING = "https://github.com/bnegt/Fusitool2Craftool/issues/1"
 BLOCKING_ISSUES = {
     895: "tapered ball mills / tapered mills, and V-bits with a tip diameter",
     896: "roundover bits (and other form cutters)",
+    897: "reamers and counterbores (no CamCraft kind)",
+    3368: "tapered mills (tip form: sharp, flat, ball)",
 }
 
 # CamCraft's ToolKind variants as of main @ 7a626a7f (v0.25.0).

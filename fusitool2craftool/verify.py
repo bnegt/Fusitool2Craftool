@@ -12,7 +12,7 @@ import json
 import math
 from pathlib import Path
 
-from .convert import INCH, KINDS, Conversion
+from .convert import INCH, KINDS, Conversion, presets_of
 
 TOL = 1e-3  # mm / rpm, after rounding to 6 decimals
 
@@ -107,18 +107,39 @@ def compare(d: dict, entry: dict) -> list[str]:
         out.append(f"number is {d.get('number')}, Fusion tool number is {int(number)}")
 
     preset = _matching_preset(entry, d)
-    if preset is None and (entry.get("start-values") or {}).get("presets"):
+    if preset is None and presets_of(entry):
         out.append(f"rpm {d.get('rpm')} / feed {d.get('feed')} match no Fusion preset")
     return out
 
 
 def _matching_preset(entry: dict, d: dict) -> dict | None:
-    """The preset whose n / v_f the definition carries (unit-scaled)."""
+    """The preset whose speed and feed the definition carries (unit-scaled).
+
+    Recomputed here from Fusion's fields, not through the converter: the
+    feed is ``v_f``; for a drill also ``v_f_plunge`` or ``f_n`` x ``n``;
+    for a tap ``n`` x pitch (what CamCraft's tapping cycle feeds).
+    """
     unit = INCH if str(entry.get("unit", "")).lower() in ("inches", "inch", "in") else 1.0
-    for p in (entry.get("start-values") or {}).get("presets") or []:
-        n, vf = p.get("n"), p.get("v_f")
-        if not isinstance(n, (int, float)) or not isinstance(vf, (int, float)):
+    kind = d.get("kind")
+    rpm, feed = d.get("rpm", -1), d.get("feed", -1)
+    for p in presets_of(entry):
+        n = p.get("n")
+        if not _is_num(n) or not math.isclose(rpm, n, abs_tol=TOL):
             continue
-        if math.isclose(d.get("rpm", -1), n, abs_tol=TOL) and math.isclose(d.get("feed", -1), vf * unit, abs_tol=TOL):
+        feeds = [p.get("v_f")]
+        if kind == "drill":
+            feeds.append(p.get("v_f_plunge"))
+            if _is_num(p.get("f_n")):
+                feeds.append(p["f_n"] * n)
+        feeds = [f * unit for f in feeds if _is_num(f) and f > 0]
+        if kind == "tap":
+            feeds.append(n * d.get("pitch", 0))
+        if any(math.isclose(feed, f, abs_tol=TOL, rel_tol=1e-9) for f in feeds):
             return p
+    if kind == "tap" and math.isclose(feed, rpm * d.get("pitch", 0), abs_tol=TOL):
+        return {"name": "rpm x pitch"}  # tap feed derived from the running rpm
     return None
+
+
+def _is_num(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
