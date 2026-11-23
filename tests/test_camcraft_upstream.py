@@ -93,6 +93,26 @@ class CamCraftUpstreamTests(unittest.TestCase):
                 f"New kinds may cover skipped Fusion tools; update convert.py and KNOWN_KINDS. See {TRACKING}"
             )
 
+    def test_released_materials_unchanged(self):
+        # The converter writes only material words the latest CamCraft
+        # release knows (an unknown word refuses the whole library).
+        from fusitool2craftool.convert import RELEASED_MATERIALS, UNRELEASED_MATERIALS
+
+        tag = _fetch(f"https://api.github.com/repos/{REPO}/releases/latest")["tag_name"]
+        source = _fetch(
+            f"https://api.github.com/repos/{REPO}/contents/crates/tools/src/cutting.rs?ref={tag}", raw=True
+        )
+        words = set(re.findall(r'WorkMaterial::\w+ => "([a-z0-9_]+)"', source))
+        self.assertTrue(words, f"no material words found in CamCraft {tag} cutting.rs")
+        if words != set(RELEASED_MATERIALS):
+            added = sorted(words - set(RELEASED_MATERIALS))
+            removed = sorted(set(RELEASED_MATERIALS) - words)
+            self.fail(
+                f"CamCraft {tag} material words changed - added: {added or 'none'}, removed: {removed or 'none'}.\n"
+                f"Move released words from UNRELEASED_MATERIALS ({', '.join(UNRELEASED_MATERIALS)}) "
+                f"to RELEASED_MATERIALS in convert.py. See {TRACKING}"
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

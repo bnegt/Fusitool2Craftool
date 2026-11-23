@@ -9,7 +9,7 @@ CamCraft window. A Fusion script that exports **all** your tool libraries in
 one go is included.
 
 Pure Python 3.10+, no dependencies. Tested against CamCraft 0.25.0: all
-7,406 tools converted from 25 real libraries import without a change (see
+7,446 tools converted from 25 real libraries import without a change (see
 [Testing against CamCraft](#testing-against-camcraft)).
 
 ## How to run
@@ -71,6 +71,9 @@ python3 -m fusitool2craftool MyTools.tools -o ~/cam/shop.camtools
 
 # Take speeds from a named Fusion preset, and say which material they are for
 python3 -m fusitool2craftool MyTools.tools --preset "Finishing" --material aluminium_6061
+
+# Bring every preset over as per-material cutting data (aluminium, steel, ...)
+python3 -m fusitool2craftool MyTools.tools --all-presets
 
 # Library without feeds/speeds (e.g. vendor libraries): give defaults
 python3 -m fusitool2craftool Vendor.json --default-rpm 18000 --default-feed 1000
@@ -195,7 +198,9 @@ This runs `camcraft-cli mcp --connect 127.0.0.1:7777` and calls CamCraft's
 | Option | Meaning |
 |---|---|
 | `--preset NAME` | Fusion preset to take rpm/feed from (default: each tool's first) |
-| `--material WORD` | CamCraft material the presets are for: `aluminium_6061`, `mild_steel`, `stainless_304`, `grey_cast_iron`, `brass`, `plastics_pom`, `softwood`, `hardwood`, `mdf`, `plywood`, `acrylic`, `hdpe` |
+| `--material WORD` | CamCraft material the chosen preset is for: `aluminium_6061`, `mild_steel`, `stainless_304`, `grey_cast_iron`, `brass`, `plastics_pom` |
+| `--all-presets` | also write one cutting data row per Fusion preset whose name names a CamCraft material (see [Cutting data per material](#cutting-data-per-material)) |
+| `--unreleased-materials` | allow `softwood`, `hardwood`, `mdf`, `plywood`, `acrylic`, `hdpe`: CamCraft has them after 0.25.0, and 0.25.0 refuses a library that names them |
 | `--holder-d MM`, `--holder-len MM` | holder size for tools with no holder in Fusion (default 50 x 40) |
 | `--default-rpm`, `--default-feed` | speeds for tools without a preset (otherwise skipped) |
 | `--strict` | fail instead of skipping tools that cannot be converted |
@@ -206,7 +211,7 @@ This runs `camcraft-cli mcp --connect 127.0.0.1:7777` and calls CamCraft's
 |---|---|
 | flat end mill, face mill | `end_mill` (`bull_nose` if it has a corner radius) |
 | ball end mill | `ball_nose` |
-| bull nose end mill | `bull_nose` |
+| bull nose end mill | `bull_nose` (`ball_nose` if the corner radius is D/2, up to 10 % over for vendor rounding) |
 | chamfer mill, counter sink | `taper` (Fusion's half angle `TA` is doubled) |
 | drill, spot drill, center drill | `drill` |
 | tap right/left hand | `tap` |
@@ -237,11 +242,37 @@ This runs `camcraft-cli mcp --connect 127.0.0.1:7777` and calls CamCraft's
   cycle runs; a warning names the source. Older libraries (format version 1)
   keep one unnamed preset as `start-values: {"*": ...}`; it is read the same.
   Stepdown/stepover go into a cutting data row (`unknown` material unless
-  `--material` is given).
+  `--material` is given). With `--all-presets` every preset can become a
+  row of its own, see below.
 - Holders: holder entries (and holder-only libraries) are counted and
   reported, not converted - CamCraft imports no stand-alone holders.
 - Vendor, product id, product link, flute count, tool material (HSS/carbide)
   and the Fusion tool number are carried over.
+
+### Cutting data per material
+
+A Fusion tool often has several presets (aluminium, steel, plastic, ...).
+By default only one becomes the tool's rpm/feed (`--preset`, or the first).
+With `--all-presets`, each preset whose **name** names a CamCraft material
+becomes a cutting data row for that material, so one file carries them all:
+
+| Preset name contains | Row |
+|---|---|
+| aluminum/aluminium, 6061, 7075, ... | `aluminium_6061` |
+| steel, mild, low carbon, 1018, 4140, ... | `mild_steel` |
+| stainless, 303/304/316, inox | `stainless_304` |
+| cast iron, gray/grey iron | `grey_cast_iron` |
+| brass | `brass` |
+| POM, acetal, Delrin, plastic | `plastics_pom` |
+| softwood/hardwood, MDF, plywood, acrylic, HDPE | the wood/plastic words, with `--unreleased-materials` only |
+
+Fusion's own preset material field is empty in nearly every library, so the
+name is the only lead, and nothing is guessed: a name naming two materials
+("Aluminum/Copper/Brass"), a hardened grade ("P20 (30-40 HRC) tool steel",
+"440C (30-40 HRC)"), titanium, copper, graphite or composites gives no row.
+The first preset for a material wins. Every preset that does not become a
+row is listed with the reason (`unmatched`, `duplicate <material>`,
+`no speeds`, or needs a newer CamCraft), counted over the library.
 
 ### Not converted
 
@@ -296,8 +327,9 @@ CAMCRAFT_CLI=~/camcraft-0.25.0-linux-x86_64/camcraft-cli \
     python3 -m unittest discover -s tests -t .
 ```
 
-Last run (CamCraft 0.25.0, 2026-11-23): 25 libraries, 7,406 tools written,
-7,406 imported, none renamed or skipped.
+Last run (CamCraft 0.25.0, 2026-11-23): 25 libraries, 7,446 tools written,
+7,446 imported, none renamed or skipped, with and without `--all-presets`
+(10,869 material rows).
 
 ### CamCraft upstream check
 

@@ -91,13 +91,25 @@ class CamCraftLiveTests(unittest.TestCase):
     def test_edge_cases_with_material_rows(self):
         self.assert_imports(edge_cases(), Options(material="aluminium_6061"))
 
+    def test_rows_per_preset(self):
+        presets = [{"name": "6061 Aluminum", "n": 18000, "v_f": 2000, "stepdown": 3, "use-stepdown": True},
+                   {"name": "4140 Steel", "n": 6000, "v_f": 500},
+                   {"name": "303 Stainless", "n": 5000, "v_f": 400, "stepover": 1, "use-stepover": True},
+                   {"name": "Gray Iron", "n": 7000, "v_f": 700},
+                   {"name": "Brass", "n": 15000, "v_f": 1500},
+                   {"name": "Acetal", "n": 16000, "v_f": 2500},
+                   {"name": "Hardwood", "n": 16000, "v_f": 3000}]  # unreleased word: left out
+        entries = [tool(description=f"multi {i}", presets=presets) for i in range(2)] + edge_cases()
+        self.assert_imports(entries, Options(all_presets=True))
+
     def test_private_libraries(self):
         files = library_files(PRIVATE) if PRIVATE.is_dir() else []
         if not files:
             self.skipTest("no Fusion libraries in private/")
         for src in files:
-            with self.subTest(library=str(src.relative_to(PRIVATE))):
-                self.assert_imports(load_library(src))
+            for options in (Options(), Options(all_presets=True)):
+                with self.subTest(library=str(src.relative_to(PRIVATE)), all_presets=options.all_presets):
+                    self.assert_imports(load_library(src), options)
 
 
 if __name__ == "__main__":

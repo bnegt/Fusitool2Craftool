@@ -28,19 +28,23 @@ from __future__ import annotations
 
 import math
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 
 INCH = 25.4
 
 # CamCraft's workpiece material words (WorkMaterial::word in
-# crates/tools/src/cutting.rs).
-MATERIALS = (
+# crates/tools/src/cutting.rs). A word CamCraft does not know refuses the
+# whole library, so only released words are written by default.
+RELEASED_MATERIALS = (  # CamCraft 0.25.0
     "aluminium_6061",
     "mild_steel",
     "stainless_304",
     "grey_cast_iron",
     "brass",
     "plastics_pom",
+)
+UNRELEASED_MATERIALS = (  # CamCraft main after 0.25.0 (cd217a00a); --unreleased-materials
     "softwood",
     "hardwood",
     "mdf",
@@ -48,6 +52,42 @@ MATERIALS = (
     "acrylic",
     "hdpe",
 )
+MATERIALS = RELEASED_MATERIALS + UNRELEASED_MATERIALS
+
+# Fusion preset name -> CamCraft material, for --all-presets. Fusion's own
+# preset "material" field is empty in nearly every library, so the name is
+# the only lead. A name must match exactly one group; anything harder,
+# ambiguous or unknown is left out and reported, never guessed.
+PRESET_MATERIALS = (
+    ("aluminium_6061", r"alumin|\balu\b|\b(6061|6082|7075|5083|2024)\b"),
+    ("stainless_304", r"stainless|\binox\b|\b30[34]\b|\b316l?\b"),
+    ("mild_steel", r"\bsteel\b|\bmild\b|low carbon|\b(1018|1020|1045|4140|4340|a36|s235|s355)\b"),
+    ("grey_cast_iron", r"cast iron|\bgr[ae]y iron\b"),
+    ("brass", r"\bbrass\b"),
+    ("plastics_pom", r"\bpom\b|acetal|delrin|\bplastics?\b"),
+    ("softwood", r"soft ?woods?\b|\bpine\b"),
+    ("hardwood", r"hard ?woods?\b|\boak\b|\bmaple\b"),
+    ("mdf", r"\bmdf\b"),
+    ("plywood", r"\bply(wood)?\b"),
+    ("acrylic", r"acrylic|\bpmma\b|plexi"),
+    ("hdpe", r"\bhdpe\b|\buhmw|polyethylene"),
+)
+# Materials CamCraft has no group for, or hardened grades whose numbers
+# would be wrong for the group the name also matches.
+PRESET_EXCLUDE = (r"hrc\b|hardened|tool steel|\b(p20|d2|h13)\b|titan|inconel|copper|"
+                  r"graphite|cfrp|carbon fib|composite")
+
+
+def preset_material(name) -> str | None:
+    """The CamCraft material a Fusion preset name is for, or None."""
+    n = str(name or "").strip().lower()
+    if not n or re.search(PRESET_EXCLUDE, n):
+        return None
+    hits = {m for m, pattern in PRESET_MATERIALS if re.search(pattern, n)}
+    if "stainless_304" in hits:
+        hits.discard("mild_steel")  # "stainless steel"
+    return hits.pop() if len(hits) == 1 else None
+
 
 # catalog_fields.rs limits.
 MAX_SHORT = 80
@@ -98,6 +138,13 @@ class Options:
     default_rpm: float | None = None
     default_feed: float | None = None
     """mm/min, used when a tool has no usable preset."""
+    all_presets: bool = False
+    """Also write one cutting data row per preset whose name names a material."""
+    unreleased_materials: bool = False
+    """Allow the material words CamCraft has after its latest release."""
+
+    def materials(self) -> tuple[str, ...]:
+        return MATERIALS if self.unreleased_materials else RELEASED_MATERIALS
 
 
 @dataclass
@@ -121,6 +168,9 @@ class Conversion:
     """Fusion entries that are tools (holders not counted)."""
     holders: int = 0
     """Fusion holder entries (not converted: CamCraft imports no stand-alone holders)."""
+    presets: Counter = field(default_factory=Counter)
+    """--all-presets: (preset name, outcome) -> tools; outcome is the
+    material word, "unmatched", "duplicate <material>" or "no speeds"."""
 
 
 def unsupported_category(entry: dict) -> str | None:
@@ -130,7 +180,8 @@ def unsupported_category(entry: dict) -> str | None:
     dc, re_ = _num(g.get("DC")), _num(g.get("RE"))
     if ftype == "tapered mill":
         return "tapered ball mill" if re_ and re_ > 0 else "tapered mill"
-    if ftype in ("ball end mill", "radius mill", "form mill") and dc and re_ and re_ > dc / 2 * 1.1:
+    if (ftype in ("ball end mill", "bull nose end mill", "flat end mill", "radius mill", "form mill")
+            and dc and re_ and re_ > dc / 2 * 1.1):
         return "roundover bit"
     if ftype == "radius mill":
         return "roundover bit"
@@ -145,9 +196,14 @@ class ToolRefused(ValueError):
 
 def convert(entries: list[dict], options: Options | None = None) -> Conversion:
     options = options or Options()
-    if options.material is not None and options.material not in MATERIALS:
+    if options.material is not None and options.material not in options.materials():
+        if options.material in MATERIALS:
+            raise ValueError(
+                f"material {options.material!r} is newer than CamCraft 0.25.0, which refuses a "
+                f"library that names it; pass --unreleased-materials for a newer CamCraft build"
+            )
         raise ValueError(
-            f"unknown material {options.material!r}; CamCraft knows: {', '.join(MATERIALS)}"
+            f"unknown material {options.material!r}; CamCraft knows: {', '.join(options.materials())}"
         )
     out = Conversion()
     taken: set[str] = set()
@@ -158,7 +214,7 @@ def convert(entries: list[dict], options: Options | None = None) -> Conversion:
         out.input_tools += 1
         label = _label(entry)
         try:
-            definition, warnings = convert_tool(entry, options)
+            definition, warnings = convert_tool(entry, options, out.presets)
         except ToolRefused as e:
             out.skipped.append(Skipped(label, str(e), unsupported_category(entry)))
             continue
@@ -172,7 +228,7 @@ def convert(entries: list[dict], options: Options | None = None) -> Conversion:
     return out
 
 
-def convert_tool(entry: dict, options: Options) -> tuple[dict, list[str]]:
+def convert_tool(entry: dict, options: Options, presets_report: Counter | None = None) -> tuple[dict, list[str]]:
     """One Fusion tool as a CamCraft definition, plus warnings.
 
     Raises ToolRefused when the tool cannot be represented.
@@ -230,10 +286,21 @@ def convert_tool(entry: dict, options: Options) -> tuple[dict, list[str]]:
                 raise ToolRefused(f"corner radius {re_:g} mm exceeds half the {dc:g} mm diameter (form/roundover cutter)")
         else:
             d["corner_r"] = dc / 2
+    elif kind in ("bull_nose", "end_mill") and re_ > 0:
+        if re_ >= dc / 2 * (1 - 1e-6):
+            # A corner radius of D/2 is a ball. Vendors round (a D24.9999
+            # R12.5001 bull nose), so up to 10 % over D/2 is still one;
+            # further over is a form/roundover cutter.
+            if re_ > dc / 2 * 1.1:
+                raise ToolRefused(f"corner radius {re_:g} mm exceeds half the {dc:g} mm diameter (form/roundover cutter)")
+            d["kind"] = "ball_nose"
+            d["corner_r"] = dc / 2
+            if abs(re_ - dc / 2) > 1e-9:
+                warnings.append(f"corner radius {re_:g} mm on a {dc:g} mm {ftype} imported as a ball nose")
+        else:
+            d["kind"] = "bull_nose"
+            d["corner_r"] = re_
     elif kind == "bull_nose":
-        d["corner_r"] = re_
-    elif kind == "end_mill" and re_ > 0:
-        d["kind"] = "bull_nose"
         d["corner_r"] = re_
 
     if kind in UNDERCUT:
@@ -299,8 +366,12 @@ def convert_tool(entry: dict, options: Options) -> tuple[dict, list[str]]:
             d[key] = text
 
     row = _cutting_row(preset, options, rpm, feed, unit)
-    if row:
-        d["cutting_data"] = [row]
+    rows = [row] if row else []
+    if options.all_presets:
+        rows += _preset_rows(entry, preset, options, rows, d["kind"], d["pitch"], unit,
+                             presets_report if presets_report is not None else Counter())
+    if rows:
+        d["cutting_data"] = rows
 
     _round_numbers(d)
     why = why_not_sane(d)
@@ -618,13 +689,52 @@ def _material_group(preset: dict | None, options: Options) -> str:
     return ""
 
 
-def _cutting_row(preset: dict | None, options: Options, rpm: float, feed: float, unit: float) -> dict | None:
+def _steps(preset: dict | None, unit: float) -> dict:
     steps = {}
     if preset:
         for key in ("stepdown", "stepover"):
             v = _num(preset.get(key))
             if preset.get(f"use-{key}") and v and v > 0:
                 steps[key] = v * unit
+    return steps
+
+
+def _preset_rows(entry: dict, chosen: dict | None, options: Options, rows: list[dict],
+                 kind: str, pitch: float, unit: float, report: Counter) -> list[dict]:
+    """One cutting row per preset whose name names a CamCraft material.
+
+    The first preset for a material wins; the tool's chosen preset already
+    stands for --material when that is given.
+    """
+    taken = {r["material"] for r in rows}
+    out = []
+    for p in presets_of(entry):
+        name = str(p.get("name", "")).strip() or "(unnamed)"
+        if p is chosen and options.material:
+            continue
+        material = preset_material(name)
+        if material is None:
+            report[(name, "unmatched")] += 1
+            continue
+        if material not in options.materials():
+            report[(name, f"{material} needs a CamCraft newer than 0.25.0 (--unreleased-materials)")] += 1
+            continue
+        if material in taken:
+            report[(name, f"duplicate {material}")] += 1
+            continue
+        rpm = _num(p.get("n"))
+        feed, _ = preset_feed(p, kind, pitch, unit)
+        if not (rpm and rpm > 0 and feed and feed > 0):
+            report[(name, "no speeds")] += 1
+            continue
+        taken.add(material)
+        report[(name, material)] += 1
+        out.append({"material": material, "rpm": rpm, "feed": feed, **_steps(p, unit)})
+    return out
+
+
+def _cutting_row(preset: dict | None, options: Options, rpm: float, feed: float, unit: float) -> dict | None:
+    steps = _steps(preset, unit)
     if options.material:
         return {"material": options.material, "rpm": rpm, "feed": feed, **steps}
     if steps:
