@@ -7,7 +7,7 @@ convert and verify every one of them (`PrivateLibraryTests` in
 `tests/test_convert.py`).
 
 Last checked 2026-11-23: 21 libraries, 6,125 tools; 20 libraries convert,
-5,898 tools written, all verified.
+7,395 tools written, all verified and accepted by CamCraft 0.25.0.
 
 ## Sources
 

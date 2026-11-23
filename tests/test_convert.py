@@ -1,4 +1,5 @@
 import io
+import math
 import json
 import os
 import tempfile
@@ -220,6 +221,68 @@ class SkipCategoryTests(unittest.TestCase):
             tool(),
         ])
         self.assertEqual(sorted(s.category for s in r.skipped), ["roundover bit", "tapered ball mill"])
+
+    def test_slitting_saw_is_t_slot(self):
+        # RobbJack-style saw: 0.75" head, 0.002" thick, on a 0.25" arbor stub
+        e = tool("slot mill", unit="inches", description="saw 0.002",
+                 geometry={"DC": 0.75, "LCF": 0.002, "SFDM": 0.25, "LB": 0.252, "OAL": 0.252,
+                           "shoulder-diameter": 0.25, "NOF": 10})
+        d, result = one(e)
+        self.assertEqual(d["kind"], "t_slot")
+        self.assertAlmostEqual(d["diameter"], 19.05)
+        self.assertAlmostEqual(d["flute_len"], 0.0508)
+        self.assertAlmostEqual(d["shank_d"], 6.35)
+        self.assertAlmostEqual(d["shank_len"], 6.35)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = camtools.write(result, Path(tmp) / "out.camtools")
+            self.assertEqual(verify_file(path, result), [])
+
+    def test_keyseat_by_name_and_neck_is_the_wider(self):
+        d, _ = one(tool("slot mill", description="Woodruff keyseat #606",
+                        geometry={"DC": 19, "LCF": 4.8, "SFDM": 8, "shoulder-diameter": 6, "LB": 30}))
+        self.assertEqual(d["kind"], "keyseat")
+        self.assertEqual(d["shank_d"], 8)  # wider of shaft and shoulder: never under-reports the body
+
+    def test_undercut_neck_not_under_head_skipped(self):
+        r = convert([tool("slot mill", geometry={"DC": 2, "LCF": 1, "SFDM": 6, "LB": 20})])
+        self.assertIn("neck (shank diameter) 6", r.skipped[0].reason)
+
+    def test_lollipop_flute_capped_where_neck_leaves_ball(self):
+        e = tool("lollipop mill", unit="inches", description="3/8 lollipop",
+                 geometry={"DC": 0.375, "LCF": 0.35, "SFDM": 0.24, "LB": 2.15, "OAL": 5})
+        d, result = one(e)
+        self.assertEqual(d["kind"], "lollipop")
+        self.assertLess(d["flute_len"], 0.35 * 25.4)
+        self.assertIsNone(why_not_sane(d))
+        self.assertTrue(any("capped" in w for w in result.warnings))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = camtools.write(result, Path(tmp) / "out.camtools")
+            self.assertEqual(verify_file(path, result), [])
+
+    def test_lollipop_flute_under_ball_centre_skipped(self):
+        r = convert([tool("lollipop mill", geometry={"DC": 6, "LCF": 2, "SFDM": 4, "LB": 30})])
+        self.assertIn("from 3 mm (the ball's centre)", r.skipped[0].reason)
+
+    def test_dovetail_angle_is_off_the_axis(self):
+        # Thermwood "14 Deg x 3/4 Dia x 3/4" router dovetail on a 1/2" shank
+        e = tool("dovetail mill", unit="inches", description="Dovetail 14 Deg x 3/4 Dia",
+                 geometry={"DC": 0.75, "LCF": 0.75, "SFDM": 0.5, "LB": 1.6, "TA": 14})
+        d, result = one(e)
+        self.assertEqual(d["kind"], "dovetail")
+        self.assertEqual(d["tip_angle"], 76)  # CamCraft: off the bottom face
+        # the flank reaches the 1/2" shank diameter at 0.125"/tan(14) = 0.501"
+        self.assertAlmostEqual(d["flute_len"], 0.125 / math.tan(math.radians(14)) * 25.4, places=4)
+        self.assertTrue(any("capped" in w for w in result.warnings))
+        self.assertIsNone(why_not_sane(d))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = camtools.write(result, Path(tmp) / "out.camtools")
+            self.assertEqual(verify_file(path, result), [])
+
+    def test_dovetail_uncapped_and_bad_angle(self):
+        d, _ = one(tool("dovetail mill", geometry={"DC": 25.4, "LCF": 25.4, "SFDM": 12.7, "LB": 38, "TA": 14}))
+        self.assertEqual(d["flute_len"], 25.4)  # flank stays outside the neck: no cap
+        r = convert([tool("dovetail mill", geometry={"DC": 20, "SFDM": 10, "TA": 0})])
+        self.assertIn("taper angle (TA)", r.skipped[0].reason)
 
     def test_reamer_counterbore_form_mill_named(self):
         r = convert([tool("reamer"), tool("counter bore"), tool("form mill"), tool("probe")])
