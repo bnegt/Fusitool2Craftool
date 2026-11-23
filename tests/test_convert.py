@@ -78,6 +78,28 @@ class ConvertTests(unittest.TestCase):
         self.assertEqual(d["tip_angle"], 118)
         self.assertTrue(any("118" in w for w in result.warnings))
 
+    def test_flat_bottom_drill_is_center_cutting_end_mill(self):
+        # #17: CamCraft refuses a tip angle of 180, and a drill's must be a point.
+        # Fusion keeps the feed in v_f_plunge (no v_f), as for any drill.
+        e = tool("drill", unit="inches", description="5/8 FLAT BOTTOM DRILL",
+                 geometry={"DC": 0.625, "LCF": 2.677165354330709, "LB": 3.1496062992125986,
+                           "SFDM": 0.625, "SIG": 180},
+                 presets=[{"name": "Default preset", "n": 2139.04, "v_f_plunge": 25.6685}])
+        d, result = one(e)
+        self.assertEqual((d["kind"], d["tip_angle"], d["corner_r"]), ("end_mill", 0, 0))
+        self.assertNotIn("center_cutting", d)  # CamCraft's default: center cutting
+        self.assertAlmostEqual(d["diameter"], 15.875)
+        self.assertAlmostEqual(d["feed"], 25.6685 * 25.4, places=4)
+        self.assertTrue(any("flat bottom drill" in w for w in result.warnings))
+        self.assertIsNone(why_not_sane(d))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = camtools.write(result, Path(tmp) / "out.camtools")
+            self.assertEqual(verify_file(path, result), [])
+
+    def test_drill_point_over_180_still_refused(self):
+        r = convert([tool("drill", geometry={"SIG": 200})])
+        self.assertIn("under 180", r.skipped[0].reason)
+
     def test_left_hand_tap_needs_version_2(self):
         d, result = one(tool("tap left hand", geometry={"TP": 1.0}))
         self.assertEqual((d["kind"], d["pitch"], d["thread_hand"]), ("tap", 1.0, "left"))

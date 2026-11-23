@@ -125,6 +125,11 @@ UNDERCUT = ("t_slot", "keyseat", "lollipop", "dovetail")
 DEFAULT_DRILL_ANGLE = 118.0
 
 
+def is_flat_bottom(angle: float | None) -> bool:
+    """A drill point angle of 180 degrees: a flat bottom drill (#17)."""
+    return angle is not None and math.isclose(angle, 180.0, abs_tol=1e-6)
+
+
 @dataclass
 class Options:
     preset: str | None = None
@@ -336,7 +341,16 @@ def convert_tool(entry: dict, options: Options, presets_report: Counter | None =
         if not angle:
             angle = DEFAULT_DRILL_ANGLE
             warnings.append(f"no point angle (SIG): {angle:g} degrees assumed")
-        d["tip_angle"] = angle
+        if is_flat_bottom(angle):
+            # CamCraft drills must have a point (tip angle under 180), and
+            # its drilling cycles take only drill/tap/bore tools. A flat
+            # bottom drill is a center-cutting end mill in shape: the
+            # flat-floor ops (Pocket, Circular, milled Bore) plunge it.
+            d["kind"] = "end_mill"
+            warnings.append("flat bottom drill (point angle 180) imported as a center-cutting end mill: "
+                            "CamCraft drills need a point, so drilling cycles won't offer it")
+        else:
+            d["tip_angle"] = angle
     elif kind == "tap":
         pitch = length("TP")
         if not pitch or pitch <= 0:
@@ -358,7 +372,9 @@ def convert_tool(entry: dict, options: Options, presets_report: Counter | None =
     # teeth for --default-fz: Fusion's own count, also past CamCraft's 32-flute
     # field (a 72-tooth slitting saw still takes 72 x f_z per revolution)
     flutes = int(nof) if nof is not None and float(nof).is_integer() and nof >= 1 else None
-    rpm, feed, preset = _speeds(entry, options, unit, warnings, d["kind"], d["pitch"], dc, flutes,
+    # a flat bottom drill keeps Fusion's drill speeds (its feed is v_f_plunge)
+    speed_kind = "drill" if kind == "drill" else d["kind"]
+    rpm, feed, preset = _speeds(entry, options, unit, warnings, speed_kind, d["pitch"], dc, flutes,
                                 defaults_report if defaults_report is not None else Counter())
     d["material_group"] = _material_group(preset, options)
     d["rpm"] = rpm
@@ -389,7 +405,7 @@ def convert_tool(entry: dict, options: Options, presets_report: Counter | None =
     row = _cutting_row(preset, options, rpm, feed, unit)
     rows = [row] if row else []
     if options.all_presets:
-        rows += _preset_rows(entry, preset, options, rows, d["kind"], d["pitch"], unit,
+        rows += _preset_rows(entry, preset, options, rows, speed_kind, d["pitch"], unit,
                              presets_report if presets_report is not None else Counter())
     if rows:
         d["cutting_data"] = rows
