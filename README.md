@@ -78,6 +78,10 @@ python3 -m fusitool2craftool MyTools.tools --all-presets
 # Library without feeds/speeds (e.g. vendor libraries): give defaults
 python3 -m fusitool2craftool Vendor.json --default-rpm 18000 --default-feed 1000
 
+# ...or per tool size and kind: cutting speed + chip load, capped at the spindle's max
+python3 -m fusitool2craftool Vendor.json --default-vc 150 --default-fz 0.03 --max-rpm 24000 \
+    --default-vc drill=60 --default-feed drill=150
+
 # Show every option
 python3 -m fusitool2craftool --help
 ```
@@ -202,7 +206,9 @@ This runs `camcraft-cli mcp --connect 127.0.0.1:7777` and calls CamCraft's
 | `--all-presets` | also write one cutting data row per Fusion preset whose name names a CamCraft material (see [Cutting data per material](#cutting-data-per-material)) |
 | `--unreleased-materials` | allow `softwood`, `hardwood`, `mdf`, `plywood`, `acrylic`, `hdpe`: CamCraft has them after 0.25.0, and 0.25.0 refuses a library that names them |
 | `--holder-d MM`, `--holder-len MM` | holder size for tools with no holder in Fusion (default 50 x 40) |
-| `--default-rpm`, `--default-feed` | speeds for tools without a preset (otherwise skipped) |
+| `--default-rpm [KIND=]RPM`, `--default-feed [KIND=]MM_MIN` | speed / feed for tools Fusion gives none (otherwise skipped); see [Default speeds](#default-speeds) |
+| `--default-vc [KIND=]M_MIN`, `--default-fz [KIND=]MM` | the same from cutting speed and chip load: rpm = v_c x 1000 / (pi x D), feed = rpm x flutes x f_z |
+| `--max-rpm RPM` | cap for an rpm computed from `--default-vc` |
 | `--strict` | fail instead of skipping tools that cannot be converted |
 
 ## What is converted
@@ -274,6 +280,30 @@ The first preset for a material wins. Every preset that does not become a
 row is listed with the reason (`unmatched`, `duplicate <material>`,
 `no speeds`, or needs a newer CamCraft), counted over the library.
 
+### Default speeds
+
+Vendor catalogs often have no presets. Without help those tools are
+skipped; with defaults they get speeds, by kind and by size:
+
+| Option | Gives |
+|---|---|
+| `--default-rpm 18000` / `--default-feed 1000` | one value for every tool |
+| `--default-vc 150` | rpm = v_c x 1000 / (pi x D): a 0.5 mm end mill spins far faster than a 25 mm one |
+| `--default-fz 0.03` | feed = rpm x flutes x f_z, using Fusion's flute (tooth) count |
+| `--max-rpm 24000` | caps an rpm computed from `--default-vc` (an explicit `--default-rpm` is not capped) |
+| `KIND=value` on any of them | that kind only, e.g. `--default-vc drill=60 --default-feed drill=150`; repeat per kind |
+
+Kinds are CamCraft's: `end_mill`, `ball_nose`, `bull_nose`, `drill`, `tap`,
+`taper`, `thread_mill`, `bore`, `t_slot`, `keyseat`, `lollipop`, `dovetail`.
+Order for a missing value: the kind's own default beats the global one, and
+at each level an explicit rpm/feed beats v_c/f_z. A tap always feeds
+rpm x pitch. A value Fusion does state is never replaced. Every tool that
+gets a default is warned about, the run ends with a count per default, and
+the output check requires exactly the value the options give.
+
+Choose the numbers for your machine and material: they are starting
+values, not cutting data.
+
 ### Not converted
 
 | Fusion tool | Why |
@@ -283,7 +313,7 @@ row is listed with the reason (`unmatched`, `duplicate <material>`,
 | reamer, counterbore | CamCraft has no kind for them ([NeoTech/Camcraft#897](https://github.com/NeoTech/Camcraft/issues/897)) |
 | form mill | CamCraft has no custom-profile mill (its `Form` kind is a lathe form gauge) |
 | lathe tools, probes, engraving | not mapped yet |
-| tools without rpm/feed | skipped unless `--default-rpm` / `--default-feed` are given |
+| tools without rpm/feed | skipped unless a [default](#default-speeds) is given |
 
 A ball end mill whose radius is within 10 % of D/2 is still a ball nose
 (vendors round imperial radii, e.g. 1/8" listed as R1.5). A tool CamCraft

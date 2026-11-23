@@ -138,6 +138,14 @@ class Options:
     default_rpm: float | None = None
     default_feed: float | None = None
     """mm/min, used when a tool has no usable preset."""
+    default_vc: float | None = None
+    """Cutting speed, m/min: rpm = v_c x 1000 / (pi x D) when Fusion has none."""
+    default_fz: float | None = None
+    """Chip load, mm per tooth: feed = rpm x flutes x f_z when Fusion has none."""
+    max_rpm: float | None = None
+    """Cap for an rpm computed from --default-vc (the spindle's maximum)."""
+    kind_defaults: dict = field(default_factory=dict)
+    """CamCraft kind -> {"rpm"|"feed"|"vc"|"fz": value}; beats the global defaults."""
     all_presets: bool = False
     """Also write one cutting data row per preset whose name names a material."""
     unreleased_materials: bool = False
@@ -168,6 +176,10 @@ class Conversion:
     """Fusion entries that are tools (holders not counted)."""
     holders: int = 0
     """Fusion holder entries (not converted: CamCraft imports no stand-alone holders)."""
+    defaults: Counter = field(default_factory=Counter)
+    """Tools whose rpm/feed came from a default: description -> tools."""
+    options: Options | None = None
+    """The options the library was converted with (the output check reads them)."""
     presets: Counter = field(default_factory=Counter)
     """--all-presets: (preset name, outcome) -> tools; outcome is the
     material word, "unmatched", "duplicate <material>" or "no speeds"."""
@@ -205,7 +217,8 @@ def convert(entries: list[dict], options: Options | None = None) -> Conversion:
         raise ValueError(
             f"unknown material {options.material!r}; CamCraft knows: {', '.join(options.materials())}"
         )
-    out = Conversion()
+    _check_defaults(options)
+    out = Conversion(options=options)
     taken: set[str] = set()
     for entry in entries:
         if entry.get("type") == "holder":
@@ -214,7 +227,7 @@ def convert(entries: list[dict], options: Options | None = None) -> Conversion:
         out.input_tools += 1
         label = _label(entry)
         try:
-            definition, warnings = convert_tool(entry, options, out.presets)
+            definition, warnings = convert_tool(entry, options, out.presets, out.defaults)
         except ToolRefused as e:
             out.skipped.append(Skipped(label, str(e), unsupported_category(entry)))
             continue
@@ -228,7 +241,8 @@ def convert(entries: list[dict], options: Options | None = None) -> Conversion:
     return out
 
 
-def convert_tool(entry: dict, options: Options, presets_report: Counter | None = None) -> tuple[dict, list[str]]:
+def convert_tool(entry: dict, options: Options, presets_report: Counter | None = None,
+                 defaults_report: Counter | None = None) -> tuple[dict, list[str]]:
     """One Fusion tool as a CamCraft definition, plus warnings.
 
     Raises ToolRefused when the tool cannot be represented.
@@ -338,7 +352,12 @@ def convert_tool(entry: dict, options: Options, presets_report: Counter | None =
 
     d["holder_d"], d["holder_len"] = _holder(entry, options, warnings)
 
-    rpm, feed, preset = _speeds(entry, options, unit, warnings, d["kind"], d["pitch"])
+    nof = _num(g.get("NOF"))
+    # teeth for --default-fz: Fusion's own count, also past CamCraft's 32-flute
+    # field (a 72-tooth slitting saw still takes 72 x f_z per revolution)
+    flutes = int(nof) if nof is not None and float(nof).is_integer() and nof >= 1 else None
+    rpm, feed, preset = _speeds(entry, options, unit, warnings, d["kind"], d["pitch"], dc, flutes,
+                                defaults_report if defaults_report is not None else Counter())
     d["material_group"] = _material_group(preset, options)
     d["rpm"] = rpm
     d["feed"] = feed
@@ -651,8 +670,63 @@ def preset_feed(preset: dict, kind: str, pitch: float, unit: float) -> tuple[flo
     return None, ""
 
 
+DEFAULT_FIELDS = ("rpm", "feed", "vc", "fz")
+DEFAULT_KINDS = tuple(sorted(set(KINDS.values()) | {"bull_nose", "keyseat"}))
+
+
+def _check_defaults(options: Options) -> None:
+    for name in ("default_rpm", "default_feed", "default_vc", "default_fz", "max_rpm"):
+        v = getattr(options, name)
+        if v is not None and not (math.isfinite(v) and v > 0):
+            raise ValueError(f"--{name.replace('_', '-')} must be over 0, not {v:g}")
+    for kind, values in options.kind_defaults.items():
+        if kind not in DEFAULT_KINDS:
+            raise ValueError(f"unknown tool kind {kind!r} in a default; kinds: {', '.join(DEFAULT_KINDS)}")
+        for f, v in values.items():
+            if f not in DEFAULT_FIELDS or not (math.isfinite(v) and v > 0):
+                raise ValueError(f"default {f} for {kind} must be over 0, not {v:g}")
+
+
+def _default_levels(options: Options, kind: str):
+    """(label, values) to try in order: the kind's own defaults, then the global ones."""
+    yield f" {kind}=", options.kind_defaults.get(kind, {})
+    yield " ", {"rpm": options.default_rpm, "feed": options.default_feed,
+                "vc": options.default_vc, "fz": options.default_fz}
+
+
+def default_rpm(options: Options, kind: str, diameter: float) -> tuple[float | None, str]:
+    """The default spindle speed for a tool Fusion gives none, and how it was found."""
+    for label, values in _default_levels(options, kind):
+        if values.get("rpm"):
+            return values["rpm"], f"--default-rpm{label}{values['rpm']:g}"
+        if values.get("vc") and diameter > 0:
+            rpm = values["vc"] * 1000 / (math.pi * diameter)
+            how = f"--default-vc{label}{values['vc']:g} m/min on D{diameter:g}"
+            if options.max_rpm and rpm > options.max_rpm:
+                rpm, how = options.max_rpm, how + f", capped at --max-rpm {options.max_rpm:g}"
+            return rpm, how
+    return None, ""
+
+
+def default_feed(options: Options, kind: str, rpm: float, flutes: int | None) -> tuple[float | None, str]:
+    """The default feed (mm/min) for a tool Fusion gives none, and how it was found."""
+    for label, values in _default_levels(options, kind):
+        if values.get("feed"):
+            return values["feed"], f"--default-feed{label}{values['feed']:g}"
+        if values.get("fz") and flutes:
+            return rpm * flutes * values["fz"], f"--default-fz{label}{values['fz']:g} x {flutes} flutes"
+    return None, ""
+
+
+def _how_key(how: str) -> str:
+    """The option part of a default's description, for the run summary."""
+    return re.split(r" on D| x \d|, capped", how)[0] + (", capped at --max-rpm" if "capped" in how else "")
+
+
 def _speeds(entry: dict, options: Options, unit: float, warnings: list[str],
-            kind: str = "end_mill", pitch: float = 0.0):
+            kind: str = "end_mill", pitch: float = 0.0, diameter: float = 0.0,
+            flutes: int | None = None, report: Counter | None = None):
+    report = report if report is not None else Counter()
     preset = _pick_preset(entry, options)
     rpm = _num(preset.get("n")) if preset else None
     feed, source = preset_feed(preset, kind, pitch, unit) if preset else (None, "")
@@ -661,20 +735,23 @@ def _speeds(entry: dict, options: Options, unit: float, warnings: list[str],
     if preset and options.preset and str(preset.get("name", "")).strip().lower() != options.preset.strip().lower():
         warnings.append(f"no preset named '{options.preset}': used '{preset.get('name')}'")
     if not rpm or rpm <= 0:
-        if options.default_rpm:
-            rpm = options.default_rpm
-            warnings.append(f"no spindle speed in Fusion: default {rpm:g} rpm used")
-        else:
-            raise ToolRefused("no spindle speed in Fusion (give --default-rpm)")
+        rpm, how = default_rpm(options, kind, diameter)
+        if rpm is None:
+            raise ToolRefused("no spindle speed in Fusion (give --default-rpm or --default-vc)")
+        warnings.append(f"no spindle speed in Fusion: {rpm:.6g} rpm from {how}")
+        report[f"rpm from {_how_key(how)}"] += 1
     if not feed or feed <= 0:
         if kind == "tap" and pitch > 0:
             feed = rpm * pitch
             warnings.append(f"no feed in Fusion: tap feed {feed:g} mm/min = rpm x pitch")
-        elif options.default_feed:
-            feed = options.default_feed
-            warnings.append(f"no cutting feed in Fusion: default {feed:g} mm/min used")
         else:
-            raise ToolRefused("no cutting feed in Fusion (give --default-feed)")
+            feed, how = default_feed(options, kind, rpm, flutes)
+            if feed is None:
+                why = " and no flute count for --default-fz" if not flutes and (
+                    options.default_fz or options.kind_defaults.get(kind, {}).get("fz")) else ""
+                raise ToolRefused(f"no cutting feed in Fusion{why} (give --default-feed or --default-fz)")
+            warnings.append(f"no cutting feed in Fusion: {feed:.6g} mm/min from {how}")
+            report[f"feed from {_how_key(how)}"] += 1
     return rpm, feed, preset
 
 

@@ -83,6 +83,18 @@ class CamCraftLiveTests(unittest.TestCase):
         self.assertEqual(convert(edge_cases()).skipped, [])
         self.assert_imports(edge_cases())
 
+    def test_catalog_without_presets_on_defaults(self):
+        # #8: a vendor catalog without presets, on per-diameter / per-kind defaults
+        entries = []
+        for e in edge_cases():
+            e = dict(e)
+            e.pop("start-values", None)
+            entries.append(e)
+        options = Options(default_vc=150, default_fz=0.03, max_rpm=24000,
+                          kind_defaults={"drill": {"vc": 60, "feed": 150}, "t_slot": {"vc": 60, "fz": 0.005}})
+        self.assertEqual(convert(entries, options).skipped, [])
+        self.assert_imports(entries, options)
+
     def test_duplicate_fusion_numbers_are_fine(self):
         # .camtools numbers are not imported (CamCraft numbers the tools
         # itself), so tools sharing a Fusion T number do not clash.

@@ -50,12 +50,16 @@ def verify_file(path: str | Path, conversion: Conversion) -> list[str]:
         if source is None:
             problems.append(f"'{name}' has no Fusion source tool")
             continue
-        problems.extend(f"{name}: {p}" for p in compare(t.get("definition") or {}, source))
+        problems.extend(f"{name}: {p}" for p in compare(t.get("definition") or {}, source, conversion.options))
     return problems
 
 
-def compare(d: dict, entry: dict) -> list[str]:
-    """Differences between one written definition and its Fusion entry."""
+def compare(d: dict, entry: dict, options=None) -> list[str]:
+    """Differences between one written definition and its Fusion entry.
+
+    With the conversion's ``options``, an rpm or feed Fusion does not state
+    must be exactly the default those options give; without them, any.
+    """
     out: list[str] = []
     unit = INCH if str(entry.get("unit", "")).lower() in ("inches", "inch", "in") else 1.0
     g = entry.get("geometry") or {}
@@ -128,8 +132,8 @@ def compare(d: dict, entry: dict) -> list[str]:
     if isinstance(number, (int, float)) and number > 0 and d.get("number") != int(number):
         out.append(f"number is {d.get('number')}, Fusion tool number is {int(number)}")
 
-    if presets_of(entry) and _matching_preset(entry, d) is None:
-        out.append(f"rpm {d.get('rpm')} / feed {d.get('feed')} match no Fusion preset")
+    if (presets_of(entry) or options is not None) and _matching_preset(entry, d, options) is None:
+        out.append(f"rpm {d.get('rpm')} / feed {d.get('feed')} match no Fusion preset or default")
 
     rows = d.get("cutting_data") or []
     words = [r.get("material") for r in rows]
@@ -138,29 +142,38 @@ def compare(d: dict, entry: dict) -> list[str]:
     for r in rows:
         if r.get("material") not in MATERIALS + ("unknown",):
             out.append(f"cutting data material {r.get('material')!r} is not a CamCraft material")
-        elif _matching_preset(entry, {**d, "rpm": r.get("rpm"), "feed": r.get("feed")}) is None:
+        elif _matching_preset(entry, {**d, "rpm": r.get("rpm"), "feed": r.get("feed")}, options) is None:
             out.append(f"cutting data for {r['material']}: rpm {r.get('rpm')} / feed {r.get('feed')} "
                        f"match no Fusion preset")
     return out
 
 
-def _matching_preset(entry: dict, d: dict) -> dict | None:
+def _matching_preset(entry: dict, d: dict, options=None) -> dict | None:
     """The preset the definition's speed and feed come from (unit-scaled).
 
     Recomputed here from Fusion's fields, not through the converter: the
     feed is ``v_f``; for a drill also ``v_f_plunge`` or ``f_n`` x ``n``;
-    for a tap ``n`` x pitch (what CamCraft's tapping cycle feeds). A
-    number the preset does not state may be a --default-rpm/--default-feed
-    (or, for a tap, rpm x pitch).
+    for a tap ``n`` x pitch (what CamCraft's tapping cycle feeds). A number
+    the preset does not state is the default the options give
+    (:func:`_expected_default`), or anything when the options are unknown.
+    A tool without presets is checked against the defaults alone.
     """
     unit = INCH if str(entry.get("unit", "")).lower() in ("inches", "inch", "in") else 1.0
+    g = entry.get("geometry") or {}
     kind, pitch = d.get("kind"), d.get("pitch", 0)
     rpm, feed = d.get("rpm", -1), d.get("feed", -1)
     if not (_is_num(rpm) and _is_num(feed)):
         return None
-    for p in presets_of(entry):
+    dia = g["DC"] * unit if _is_num(g.get("DC")) else 0.0
+    nof = g.get("NOF")
+    flutes = int(nof) if _is_num(nof) and float(nof).is_integer() and nof >= 1 else None  # teeth, uncapped
+    presets = presets_of(entry) or ([{}] if options is not None else [])
+    for p in presets:
         n = p.get("n") if _is_num(p.get("n")) and p.get("n") > 0 else None
-        if n is not None and not math.isclose(rpm, n, abs_tol=TOL):
+        if n is not None:
+            if not math.isclose(rpm, n, abs_tol=TOL):
+                continue
+        elif options is not None and not _close(rpm, _expected_default(options, kind, "rpm", dia, flutes, rpm)):
             continue
         feeds = [p.get("v_f")]
         if kind == "drill":
@@ -170,9 +183,40 @@ def _matching_preset(entry: dict, d: dict) -> dict | None:
         feeds = [f * unit for f in feeds if _is_num(f) and f > 0]
         if kind == "tap":
             feeds.append(rpm * pitch)
-        if not feeds or any(math.isclose(feed, f, abs_tol=TOL, rel_tol=1e-9) for f in feeds):
+        if feeds:
+            if any(_close(feed, f) for f in feeds):
+                return p
+        elif options is None or _close(feed, _expected_default(options, kind, "feed", dia, flutes, rpm)):
             return p
     return None
+
+
+def _expected_default(options, kind: str, what: str, dia: float, flutes: int | None, rpm: float):
+    """The rpm or feed the --default-* options give this tool, or None.
+
+    The kind's own defaults beat the global ones; at each level an explicit
+    rpm/feed beats v_c/f_z. rpm = v_c x 1000 / (pi D), capped at --max-rpm;
+    feed = rpm x flutes x f_z.
+    """
+    globals_ = {"rpm": options.default_rpm, "feed": options.default_feed,
+                "vc": options.default_vc, "fz": options.default_fz}
+    for values in (options.kind_defaults.get(kind, {}), globals_):
+        if what == "rpm":
+            if values.get("rpm"):
+                return values["rpm"]
+            if values.get("vc") and dia > 0:
+                n = values["vc"] * 1000 / (math.pi * dia)
+                return min(n, options.max_rpm) if options.max_rpm else n
+        else:
+            if values.get("feed"):
+                return values["feed"]
+            if values.get("fz") and flutes:
+                return rpm * flutes * values["fz"]
+    return None
+
+
+def _close(a, b) -> bool:
+    return _is_num(a) and _is_num(b) and math.isclose(a, b, abs_tol=TOL, rel_tol=1e-6)
 
 
 def _is_num(v) -> bool:
