@@ -135,6 +135,8 @@ class Options:
     """Holder diameter (mm) for tools without a holder in Fusion."""
     holder_len: float = 40.0
     """Holder length (mm) for tools without a holder in Fusion."""
+    holder_bodies: bool = True
+    """Write a Fusion holder's segments as a drawn CamCraft holder body (#12)."""
     default_rpm: float | None = None
     default_feed: float | None = None
     """mm/min, used when a tool has no usable preset."""
@@ -396,6 +398,10 @@ def convert_tool(entry: dict, options: Options, presets_report: Counter | None =
     why = why_not_sane(d)
     if why:
         raise ToolRefused(why)
+    if options.holder_bodies:
+        body = holder_body(entry, d["flute_len"] + d["shank_len"], warnings)
+        if body:
+            d["body"] = body
     return d, warnings
 
 
@@ -599,6 +605,89 @@ def _clean_text(v, limit: int) -> str | None:
     if not s:
         return None
     return s[:limit].rstrip()
+
+
+# CamCraft's drawn-profile rules (crates/tools/src/spun.rs, v0.25.0)
+SPUN_MAX_POINTS = 64
+SPUN_MIN_SEGMENT = 0.01      # mm; we merge below twice that, rounding-safe
+SPUN_MAX_HEIGHT = 2000.0     # MAX_BODY_HEIGHT
+SPUN_MAX_RADIUS = 500.0      # MAX_BODY_RADIUS
+SPUN_SOURCE = "drawn profile"
+
+
+def holder_outline(entry: dict, base: float) -> tuple[list[list[float]] | None, str]:
+    """A Fusion holder's segments as CamCraft ``spun`` points ``[z, r, 0]``.
+
+    Fusion lists the segments from the tool end up (height, lower and upper
+    diameter). The outline starts on the axis at ``base`` (the shank's top,
+    where CamCraft seats the holder), climbs through every segment and
+    closes to the axis at the top: all straight lines, so CamCraft reads it
+    exactly. Points closer than 0.02 mm merge keeping the larger radius, so
+    the drawn holder is never thinner than Fusion's. Returns the points, or
+    None and why they cannot be drawn.
+    """
+    holder = entry.get("holder")
+    segs = holder.get("segments") if isinstance(holder, dict) else None
+    if not segs:
+        return None, "no holder segments"
+    scale = _unit_scale(holder.get("unit") or entry.get("unit"))
+    z = base
+    raw = [(z, 0.0)]
+    for i, seg in enumerate(segs, 1):
+        h = _num(seg.get("height"))
+        lo = _num(seg.get("lower-diameter"))
+        up = _num(seg.get("upper-diameter"))
+        if h is None or lo is None or up is None or h < 0:
+            return None, f"holder segment {i} has no usable height/diameters"
+        if lo * scale / 2 < 2 * SPUN_MIN_SEGMENT or up * scale / 2 < 2 * SPUN_MIN_SEGMENT:
+            return None, f"holder segment {i} narrows to the axis"
+        raw.append((z, lo * scale / 2))
+        z += h * scale
+        raw.append((z, up * scale / 2))
+    top = z
+    if top - base <= 2 * SPUN_MIN_SEGMENT:
+        return None, "holder has no height"
+    if top > SPUN_MAX_HEIGHT or max(r for _, r in raw) > SPUN_MAX_RADIUS:
+        return None, "holder is larger than CamCraft draws (2000 mm long, 500 mm radius)"
+    mid: list[list[float]] = []
+    for pz, pr in raw[1:]:
+        if mid and math.hypot(pz - mid[-1][0], pr - mid[-1][1]) < 2 * SPUN_MIN_SEGMENT:
+            mid[-1][1] = max(mid[-1][1], pr)
+            continue
+        if len(mid) >= 2 and _collinear(mid[-2], mid[-1], (pz, pr)):
+            mid[-1] = [pz, pr]
+            continue
+        mid.append([pz, pr])
+    if math.hypot(mid[0][0] - base, mid[0][1]) < 2 * SPUN_MIN_SEGMENT or \
+            math.hypot(mid[-1][0] - top, mid[-1][1]) < 2 * SPUN_MIN_SEGMENT:
+        return None, "holder narrows to the axis"
+    points = [[base, 0.0]] + mid + [[top, 0.0]]
+    if len(points) > SPUN_MAX_POINTS:
+        return None, f"holder has {len(points)} outline points (CamCraft draws at most {SPUN_MAX_POINTS})"
+    return [[round(pz, 6), round(pr, 6), 0.0] for pz, pr in points], ""
+
+
+def _collinear(a, b, c) -> bool:
+    return abs((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])) < 1e-9 and \
+        (b[0] - a[0]) * (c[0] - b[0]) + (b[1] - a[1]) * (c[1] - b[1]) > 0
+
+
+def holder_body(entry: dict, base: float, warnings: list[str]) -> dict | None:
+    """The CamCraft ``body`` for a Fusion holder: a drawn ``spun`` outline.
+
+    ``facets`` stays empty: every CamCraft that reads a .camtools body
+    (0.20.0 on) also reads ``spun`` and then draws the body from it, never
+    from the facets, so a 32-sided revolve per tool would only bloat the
+    file. A holder that cannot be drawn keeps the cylinder (``holder_d`` x
+    ``holder_len``), with a warning.
+    """
+    if not (isinstance(entry.get("holder"), dict) and entry["holder"].get("segments")):
+        return None
+    points, why = holder_outline(entry, base)
+    if points is None:
+        warnings.append(f"holder kept as a cylinder: {why}")
+        return None
+    return {"source": SPUN_SOURCE, "facets": [], "spun": points}
 
 
 def _holder(entry: dict, options: Options, warnings: list[str]) -> tuple[float, float]:

@@ -61,6 +61,16 @@ def edge_cases() -> list[dict]:
         tool(description="dovetail 14 router", type_="dovetail mill", unit="inches",
              geometry={"DC": 1, "LCF": 1, "SFDM": 0.5, "LB": 1.5, "TA": 14}),
         star,
+        tool(description="drawn holder", unit="inches", geometry={"DC": 0.5, "LCF": 1, "LB": 2, "SFDM": 0.5},
+             holder={"unit": "inches", "segments": [
+                 {"height": 0.5, "lower-diameter": 1.0, "upper-diameter": 1.25},
+                 {"height": 1.0, "lower-diameter": 1.25, "upper-diameter": 1.25},
+                 {"height": 0.25, "lower-diameter": 1.0, "upper-diameter": 1.0},
+                 {"height": 0.5, "lower-diameter": 2.5, "upper-diameter": 2.5}]}),
+        tool(description="drawn holder sliver", geometry={"DC": 6, "LCF": 10, "LB": 30},
+             holder={"unit": "millimeters", "segments": [
+                 {"height": 0.005, "lower-diameter": 20, "upper-diameter": 21},
+                 {"height": 20, "lower-diameter": 21, "upper-diameter": 21}]}),
     ]
 
 
@@ -75,6 +85,9 @@ class CamCraftLiveTests(unittest.TestCase):
             report = json.loads(push(path, None, mode="add", cli=CLI, timeout=300))
         self.assertEqual(sorted(report["added"]), sorted(t["name"] for t in result.tools))
         self.assertEqual((report["renamed"], report["skipped"]), ([], []))
+        # #12: every drawn holder is taken, none left out
+        bodies = sum("body" in t["definition"] for t in result.tools)
+        self.assertEqual((report.get("holders", 0), report.get("holders_left_out", 0)), (bodies, 0))
 
     def test_sample_fixture(self):
         self.assert_imports(load_library(FIXTURES / "sample.json"))
