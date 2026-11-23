@@ -28,6 +28,13 @@ BLOCKING_ISSUES = {
     3368: "tapered mills (tip form: sharp, flat, ball)",
 }
 
+# #14: stand-alone Fusion holders wait for a user holder library in a
+# *release*. #3645 brings it with .camtools v5; the release's reader is
+# the truth (main runs ahead), so the watch reads the latest release.
+HOLDER_LIBRARY_ISSUE = 3645
+HOLDER_TRACKING = "https://github.com/bnegt/Fusitool2Craftool/issues/14"
+RELEASED_CAMTOOLS_VERSION = 4  # v0.25.0: VERSION 1 .. HOLDER_REF_VERSION 4
+
 # CamCraft's ToolKind variants as of main @ 7a626a7f (v0.25.0).
 KNOWN_KINDS = {
     "EndMill", "BallNose", "BullNose", "Drill", "Tap", "Bore", "Turning",
@@ -64,6 +71,25 @@ def _fetch(url: str, raw: bool = False):
 
 @unittest.skipIf(os.environ.get("F2C_OFFLINE"), "F2C_OFFLINE set")
 class CamCraftUpstreamTests(unittest.TestCase):
+    def test_holder_library_not_released(self):
+        release = _fetch(f"https://api.github.com/repos/{REPO}/releases/latest")
+        tag = release.get("tag_name")
+        src = _fetch(f"https://api.github.com/repos/{REPO}/contents/crates/app/src/tool_library.rs?ref={tag}",
+                     raw=True)
+        versions = [int(v) for v in re.findall(r"const \w+_VERSION: u\d+ = (\d+);", src)]
+        newest = max(versions, default=0)
+        if newest > RELEASED_CAMTOOLS_VERSION:
+            self.fail(
+                f"CamCraft {tag} reads .camtools version {newest} (was {RELEASED_CAMTOOLS_VERSION}): "
+                f"a user holder library (#{HOLDER_LIBRARY_ISSUE}) may be released. "
+                f"Stand-alone Fusion holders can now be converted, see {HOLDER_TRACKING}; "
+                f"then raise RELEASED_CAMTOOLS_VERSION."
+            )
+        issue = _fetch(f"https://api.github.com/repos/{REPO}/issues/{HOLDER_LIBRARY_ISSUE}")
+        if issue.get("state") != "open":
+            self.skipTest(f"CamCraft #{HOLDER_LIBRARY_ISSUE} is closed but not in {tag} yet "
+                          f"(still .camtools v{newest}): wait for the release, see {HOLDER_TRACKING}")
+
     def test_blocking_issues_still_open(self):
         solved = []
         for number, tools in BLOCKING_ISSUES.items():

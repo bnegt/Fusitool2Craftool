@@ -86,6 +86,9 @@ def build_parser() -> argparse.ArgumentParser:
                       help="chip load in mm per tooth: feed = rpm x flutes x f_z (needs Fusion's flute count)")
     dflt.add_argument("--max-rpm", type=float, metavar="RPM",
                       help="cap for an rpm computed from --default-vc (your spindle's maximum)")
+    conv.add_argument("--holder-cylinders", action="store_true",
+                      help="write Fusion holders as one cylinder (largest diameter x total height) "
+                           "instead of their drawn outline")
     conv.add_argument("--strict", action="store_true",
                       help="fail instead of skipping tools that cannot be converted")
 
@@ -111,6 +114,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     options = Options(
         **defaults,
+        holder_bodies=not args.holder_cylinders,
         preset=args.preset,
         material=args.material,
         holder_d=args.holder_d,

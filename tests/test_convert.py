@@ -198,6 +198,66 @@ class ConvertTests(unittest.TestCase):
         d, _ = one(e)
         self.assertEqual((d["holder_d"], d["holder_len"]), (40, 30))
 
+    def test_holder_segments_become_a_drawn_body(self):
+        # #12: Fusion lists segments from the tool end up; the outline sits on the shank's top
+        e = tool(unit="inches", geometry={"DC": 0.5, "LCF": 1, "LB": 2, "SFDM": 0.5},
+                 holder={"unit": "inches", "segments": [
+                     {"height": 0.5, "lower-diameter": 1.0, "upper-diameter": 1.25},   # nut chamfer
+                     {"height": 1.0, "lower-diameter": 1.25, "upper-diameter": 1.25},  # nut
+                     {"height": 0.25, "lower-diameter": 1.0, "upper-diameter": 1.0},   # neck: a step in
+                     {"height": 0.5, "lower-diameter": 2.5, "upper-diameter": 2.5}]})  # flange: a step out
+        d, _ = one(e)
+        self.assertEqual((d["holder_d"], d["holder_len"]), (63.5, 57.15))  # the cylinder envelope stays
+        body = d["body"]
+        self.assertEqual((body["source"], body["facets"]), ("drawn profile", []))
+        self.assertEqual(body["spun"], [
+            [50.8, 0.0, 0.0], [50.8, 12.7, 0.0], [63.5, 15.875, 0.0], [88.9, 15.875, 0.0],
+            [88.9, 12.7, 0.0], [95.25, 12.7, 0.0], [95.25, 31.75, 0.0], [107.95, 31.75, 0.0],
+            [107.95, 0.0, 0.0]])
+
+    def test_holder_body_merges_slivers_wider_and_drops_collinear_points(self):
+        e = tool(geometry={"DC": 6, "LCF": 10, "LB": 30},
+                 holder={"unit": "millimeters", "segments": [
+                     {"height": 0.005, "lower-diameter": 20.99, "upper-diameter": 21},  # sliver: merged, wider kept
+                     {"height": 10, "lower-diameter": 21, "upper-diameter": 21},
+                     {"height": 10, "lower-diameter": 21, "upper-diameter": 21}]})   # same cylinder: one segment
+        d, _ = one(e)
+        self.assertEqual(d["body"]["spun"], [[30, 0, 0], [30, 10.5, 0], [50.005, 10.5, 0], [50.005, 0, 0]])
+
+    def test_undrawable_holder_keeps_the_cylinder(self):
+        for segs, why in (([{"height": 10, "lower-diameter": 20, "upper-diameter": 0},
+                            {"height": 10, "lower-diameter": 20, "upper-diameter": 20}], "narrows to the axis"),
+                          ([{"height": 10, "lower-diameter": "x", "upper-diameter": 20}], "no usable"),
+                          ([{"height": 3000, "lower-diameter": 20, "upper-diameter": 20}], "larger than CamCraft")):
+            with self.subTest(why=why):
+                d, result = one(tool(holder={"unit": "millimeters", "segments": segs}))
+                self.assertNotIn("body", d)
+                self.assertTrue(any(why in w for w in result.warnings), result.warnings)
+
+    def test_holder_cylinders_option(self):
+        e = tool(holder={"unit": "millimeters", "segments": [
+            {"height": 30, "lower-diameter": 40, "upper-diameter": 40}]})
+        d, _ = one(e, Options(holder_bodies=False))
+        self.assertNotIn("body", d)
+        self.assertEqual((d["holder_d"], d["holder_len"]), (40, 30))
+
+    def test_check_catches_a_thin_or_misplaced_holder(self):
+        e = tool(geometry={"DC": 6, "LCF": 10, "LB": 30}, holder={"unit": "millimeters", "segments": [
+            {"height": 20, "lower-diameter": 30, "upper-diameter": 30},
+            {"height": 10, "lower-diameter": 50, "upper-diameter": 50}]})
+        result = convert([e])
+        for change, problem in (
+                (lambda b: b["spun"].__setitem__(2, [50, 12, 0]), "thinner than Fusion segment 1"),
+                (lambda b: [q.__setitem__(0, q[0] + 5) for q in b["spun"]], "starts at z 35"),
+                (lambda b: b["spun"].insert(1, [30, 0.0, 0]), "close to the axis")):
+            with self.subTest(problem=problem), tempfile.TemporaryDirectory() as tmp:
+                path = camtools.write(result, Path(tmp) / "out.camtools")
+                self.assertEqual(verify_file(path, result), [])
+                doc = json.loads(path.read_text())
+                change(doc["tools"][0]["definition"]["body"])
+                path.write_text(json.dumps(doc))
+                self.assertTrue(any(problem in p for p in verify_file(path, result)), verify_file(path, result))
+
     def test_missing_holder_uses_defaults(self):
         d, result = one(tool(), Options(holder_d=44, holder_len=35))
         self.assertEqual((d["holder_d"], d["holder_len"]), (44, 35))

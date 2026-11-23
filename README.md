@@ -206,6 +206,7 @@ This runs `camcraft-cli mcp --connect 127.0.0.1:7777` and calls CamCraft's
 | `--all-presets` | also write one cutting data row per Fusion preset whose name names a CamCraft material (see [Cutting data per material](#cutting-data-per-material)) |
 | `--unreleased-materials` | allow `softwood`, `hardwood`, `mdf`, `plywood`, `acrylic`, `hdpe`: CamCraft has them after 0.25.0, and 0.25.0 refuses a library that names them |
 | `--holder-d MM`, `--holder-len MM` | holder size for tools with no holder in Fusion (default 50 x 40) |
+| `--holder-cylinders` | write Fusion holders as one cylinder instead of their drawn outline |
 | `--default-rpm [KIND=]RPM`, `--default-feed [KIND=]MM_MIN` | speed / feed for tools Fusion gives none (otherwise skipped); see [Default speeds](#default-speeds) |
 | `--default-vc [KIND=]M_MIN`, `--default-fz [KIND=]MM` | the same from cutting speed and chip load: rpm = v_c x 1000 / (pi x D), feed = rpm x flutes x f_z |
 | `--max-rpm RPM` | cap for an rpm computed from `--default-vc` |
@@ -240,8 +241,18 @@ This runs `camcraft-cli mcp --connect 127.0.0.1:7777` and calls CamCraft's
   neck under the head, so CamCraft sees a shallower cutter and a body no
   narrower than the real one. A neck as wide as the head (Fusion gives no
   narrower neck) is skipped.
-- Holder: Fusion's holder segments become CamCraft's holder cylinder
-  (largest diameter x total height), which is a conservative envelope.
+- Holder: a tool's Fusion holder is drawn as it is. Its segments (from the
+  tool end up to the gauge line) become a CamCraft drawn holder body
+  (`body.spun`), seated on the shank's top. CamCraft's collision checks then
+  read the real outline (nut, neck, flange) instead of one fat cylinder,
+  and the import reports "N tools; M with their holder". The cylinder
+  (largest diameter x total height) is still written as `holder_d` /
+  `holder_len`. Points closer than 0.02 mm merge, keeping the wider one, so
+  the drawn holder is never thinner than Fusion's. A holder CamCraft cannot
+  draw (narrowing to the axis, over 64 points or 2000 x 500 mm) keeps the
+  cylinder, with a warning. `--holder-cylinders` writes only cylinders.
+  Needs CamCraft 0.20.0 or newer to read the body; older versions use the
+  cylinder.
 - Speeds: the preset's `n` and `v_f`. Fusion leaves `v_f` empty on drills
   and taps, so a drill takes its plunge feed `v_f_plunge` (or feed per rev
   `f_n` x rpm) and a tap feeds rpm x pitch, which is what CamCraft's tapping
@@ -250,8 +261,9 @@ This runs `camcraft-cli mcp --connect 127.0.0.1:7777` and calls CamCraft's
   Stepdown/stepover go into a cutting data row (`unknown` material unless
   `--material` is given). With `--all-presets` every preset can become a
   row of its own, see below.
-- Holders: holder entries (and holder-only libraries) are counted and
-  reported, not converted - CamCraft imports no stand-alone holders.
+- Stand-alone holders: holder entries (and holder-only libraries) are
+  counted and reported, not converted. CamCraft 0.25.0's holder library is
+  built in (BT, CAT, ER, TTS) and `.camtools` carries tools only.
 - Vendor, product id, product link, flute count, tool material (HSS/carbide)
   and the Fusion tool number are carried over.
 

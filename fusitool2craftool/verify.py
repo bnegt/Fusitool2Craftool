@@ -128,6 +128,8 @@ def compare(d: dict, entry: dict, options=None) -> list[str]:
         if d.get("thread_hand") != hand:
             out.append(f"thread_hand is {d.get('thread_hand')!r}, Fusion type says {hand or 'right'}")
 
+    out.extend(_holder_problems(d, entry, options))
+
     number = (entry.get("post-process") or {}).get("number")
     if isinstance(number, (int, float)) and number > 0 and d.get("number") != int(number):
         out.append(f"number is {d.get('number')}, Fusion tool number is {int(number)}")
@@ -213,6 +215,94 @@ def _expected_default(options, kind: str, what: str, dia: float, flutes: int | N
             if values.get("fz") and flutes:
                 return rpm * flutes * values["fz"]
     return None
+
+
+def _holder_segments(entry: dict) -> list[tuple[float, float, float]] | None:
+    """Fusion's holder segments as (height, lower r, upper r) in mm, tool end first."""
+    holder = entry.get("holder")
+    segs = holder.get("segments") if isinstance(holder, dict) else None
+    if not segs:
+        return None
+    unit = str(holder.get("unit") or entry.get("unit") or "").lower()
+    scale = INCH if unit in ("inches", "inch", "in") else 1.0
+    out = []
+    for seg in segs:
+        vals = [seg.get(k) for k in ("height", "lower-diameter", "upper-diameter")]
+        try:
+            h, lo, up = (float(v) for v in vals)
+        except (TypeError, ValueError):
+            return None
+        out.append((h * scale, lo * scale / 2, up * scale / 2))
+    return out
+
+
+def _holder_problems(d: dict, entry: dict, options=None) -> list[str]:
+    """The holder cylinder and drawn body (#12) against Fusion's segments.
+
+    The cylinder is the largest diameter x the total height. A drawn body
+    must be a CamCraft spun outline (spun.rs rules) seated on the shank's
+    top, enclosed by exactly that cylinder, and nowhere thinner than
+    Fusion's holder: sampled inside every segment, the outline's radius is
+    at least Fusion's (merging points under 0.02 mm may only widen it).
+    """
+    out: list[str] = []
+    segs = _holder_segments(entry)
+    if segs and max(max(lo, up) for _, lo, up in segs) > 0 and sum(h for h, _, _ in segs) > 0:
+        for field, want in (("holder_d", 2 * max(max(lo, up) for _, lo, up in segs)),
+                            ("holder_len", sum(h for h, _, _ in segs))):
+            if not _close(d.get(field), want):
+                out.append(f"{field} is {d.get(field)}, Fusion holder segments give {round(want, 6)}")
+    body = d.get("body")
+    if body is None:
+        return out
+    if options is not None and not options.holder_bodies:
+        return out + ["holder body written although --holder-cylinders was given"]
+    if not segs:
+        return out + ["holder body written for a tool without Fusion holder segments"]
+    pts = body.get("spun") if isinstance(body, dict) else None
+    if not (isinstance(pts, list) and 3 <= len(pts) <= 64
+            and all(isinstance(q, list) and len(q) == 3 and all(_is_num(v) for v in q) for q in pts)):
+        return out + ["holder body has no valid spun outline (3..64 [z, r, arc] points)"]
+    if body.get("source") != "drawn profile" or body.get("facets") != []:
+        out.append("holder body must be a drawn profile with empty facets")
+    if any(q[2] != 0 for q in pts):
+        out.append("holder outline has arcs (Fusion segments are straight)")
+    if pts[0][1] != 0 or pts[-1][1] != 0 or any(q[1] <= 1e-9 for q in pts[1:-1]):
+        out.append("holder outline must close to the axis at both ends only")
+    if any(b[0] < a[0] - 1e-9 for a, b in zip(pts, pts[1:])):
+        out.append("holder outline runs back down")
+    if any(math.hypot(b[0] - a[0], b[1] - a[1]) < 0.01 for a, b in zip(pts, pts[1:])):
+        out.append("holder outline has a segment under CamCraft's 0.01 mm")
+    base = (d.get("flute_len") or 0) + (d.get("shank_len") or 0)
+    if not _close(pts[0][0], base):
+        out.append(f"holder outline starts at z {pts[0][0]}, the shank's top is {round(base, 6)}")
+    if not _close(pts[-1][0] - pts[0][0], d.get("holder_len")):
+        out.append(f"holder outline is {round(pts[-1][0] - pts[0][0], 6)} mm tall, holder_len {d.get('holder_len')}")
+    if not _close(2 * max(q[1] for q in pts), d.get("holder_d")):
+        out.append(f"holder outline is {round(2 * max(q[1] for q in pts), 6)} mm wide, holder_d {d.get('holder_d')}")
+
+    def radius_at(z: float) -> float:
+        reach = 0.0
+        for a, b in zip(pts, pts[1:]):
+            if a[0] - 1e-9 <= z <= b[0] + 1e-9:
+                if b[0] - a[0] < 1e-12:
+                    reach = max(reach, a[1], b[1])
+                else:
+                    reach = max(reach, a[1] + (b[1] - a[1]) * (z - a[0]) / (b[0] - a[0]))
+        return reach
+
+    z = pts[0][0]
+    for i, (h, lo, up) in enumerate(segs, 1):
+        if h >= 0.1:
+            for t in (0.25, 0.5, 0.75):
+                want = lo + (up - lo) * t
+                # 1 um: points are rounded to 6 decimals, and on a steep
+                # cone (11 mm of radius over 0.4 mm) that moves r by ~3e-5
+                if radius_at(z + h * t) < want - 1e-3:
+                    out.append(f"holder outline is thinner than Fusion segment {i} at z {round(z + h * t, 3)}")
+                    break
+        z += h
+    return out
 
 
 def _close(a, b) -> bool:
