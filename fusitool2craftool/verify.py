@@ -12,7 +12,7 @@ import json
 import math
 from pathlib import Path
 
-from .convert import INCH, KINDS, MATERIALS, Conversion, presets_of
+from .convert import INCH, KINDS, MATERIALS, Conversion, is_flat_bottom, presets_of
 
 TOL = 1e-3  # mm / rpm, after rounding to 6 decimals
 
@@ -115,6 +115,10 @@ def compare(d: dict, entry: dict, options=None) -> list[str]:
         allowed |= {"bull_nose", "ball_nose"}
     if base_kind == "t_slot":
         allowed.add("keyseat")  # named keyseat / Woodruff in the description
+    if base_kind == "drill" and _is_num(g.get("SIG")) and is_flat_bottom(float(g["SIG"])):
+        allowed = {"end_mill"}  # CamCraft drills need a point (#17)
+        if d.get("tip_angle") or d.get("corner_r"):
+            out.append("a flat bottom drill must be a flat end mill (tip angle and corner radius 0)")
     if d.get("kind") not in allowed:
         out.append(f"kind is {d.get('kind')!r}, Fusion type '{ftype}' gives {base_kind!r}")
 
@@ -163,6 +167,8 @@ def _matching_preset(entry: dict, d: dict, options=None) -> dict | None:
     unit = INCH if str(entry.get("unit", "")).lower() in ("inches", "inch", "in") else 1.0
     g = entry.get("geometry") or {}
     kind, pitch = d.get("kind"), d.get("pitch", 0)
+    if KINDS.get(str(entry.get("type", "")).strip().lower()) == "drill":
+        kind = "drill"  # a flat bottom drill keeps Fusion's drill speeds (#17)
     rpm, feed = d.get("rpm", -1), d.get("feed", -1)
     if not (_is_num(rpm) and _is_num(feed)):
         return None

@@ -220,7 +220,7 @@ This runs `camcraft-cli mcp --connect 127.0.0.1:7777` and calls CamCraft's
 | ball end mill | `ball_nose` |
 | bull nose end mill | `bull_nose` (`ball_nose` if the corner radius is D/2, up to 10 % over for vendor rounding) |
 | chamfer mill, counter sink | `taper` (Fusion's half angle `TA` is doubled) |
-| drill, spot drill, center drill | `drill` |
+| drill, spot drill, center drill | `drill` (`end_mill` if the point angle is 180: a flat bottom drill) |
 | tap right/left hand | `tap` |
 | thread mill | `thread_mill` |
 | boring bar | `bore` |
@@ -241,6 +241,14 @@ This runs `camcraft-cli mcp --connect 127.0.0.1:7777` and calls CamCraft's
   neck under the head, so CamCraft sees a shallower cutter and a body no
   narrower than the real one. A neck as wide as the head (Fusion gives no
   narrower neck) is skipped.
+- Flat bottom drills (point angle `SIG` 180) become a center-cutting
+  `end_mill`, with a warning. CamCraft refuses a tip angle of 180 and wants a
+  point on every drill, and its drilling cycles take only drills, taps and
+  boring bars. So the tool can't be drilled with a cycle. Its flat-floor
+  operations (Pocket, Circular, milled Bore and the others that take an end
+  mill) can plunge it, because it is center cutting. Its speeds still follow
+  Fusion's drill rules: the feed is the plunge feed `v_f_plunge`, and a
+  `--default-* drill=` value applies to it.
 - Holder: a tool's Fusion holder is drawn as it is. Its segments (from the
   tool end up to the gauge line) become a CamCraft drawn holder body
   (`body.spun`), seated on the shank's top. CamCraft's collision checks then
