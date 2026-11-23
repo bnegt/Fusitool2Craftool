@@ -73,12 +73,30 @@ def compare(d: dict, entry: dict) -> list[str]:
         return float(v) * unit if isinstance(v, (int, float)) and not isinstance(v, bool) else None
 
     check("diameter", f("DC"), "DC")
-    check("flute_len", f("LCF"), "LCF")
-    if f("SFDM"):
+    flute, flute_key = f("LCF"), "LCF"
+    if ftype in ("slot mill", "lollipop mill", "dovetail mill"):
+        # undercut: the neck is the wider of the shaft / shoulder diameters
+        necks = [v for v in (f("SFDM"), f("shoulder-diameter")) if v]
+        if necks:
+            check("shank_d", max(necks), "max(SFDM, shoulder-diameter)")
+        if ftype == "lollipop mill" and necks and flute is not None and f("DC"):
+            r, sr = f("DC") / 2, max(necks) / 2
+            meet = r + math.sqrt(max(r * r - sr * sr, 0.0))  # where the neck leaves the ball
+            if flute > meet:
+                flute, flute_key = meet, "LCF capped where the neck leaves the ball"
+        ta = g.get("TA")
+        if ftype == "dovetail mill" and _is_num(ta):
+            check("tip_angle", 90.0 - ta, "90 - TA")  # Fusion: off the axis; CamCraft: off the bottom
+            if necks and flute is not None and f("DC") and 0 < ta < 90:
+                top = (f("DC") - max(necks)) / 2 / math.tan(math.radians(ta))  # flank meets the neck
+                if flute > top:
+                    flute, flute_key = top, "LCF capped where the flank meets the neck"
+    elif f("SFDM"):
         check("shank_d", f("SFDM"), "SFDM")
+    check("flute_len", flute, flute_key)
     body = f("LB") or f("OAL")
-    if body is not None and f("LCF") is not None:
-        check("shank_len", max(body - f("LCF"), 0.0), "LB - LCF")
+    if body is not None and flute is not None:
+        check("shank_len", max(body - flute, 0.0), f"LB - {flute_key}")
 
     nof = g.get("NOF")
     if isinstance(nof, (int, float)) and float(nof).is_integer() and 1 <= nof <= 32:
@@ -89,6 +107,8 @@ def compare(d: dict, entry: dict) -> list[str]:
     allowed = {base_kind}
     if base_kind in ("end_mill", "ball_nose"):
         allowed.add("bull_nose")  # a corner radius / rounded ball radius moves it
+    if base_kind == "t_slot":
+        allowed.add("keyseat")  # named keyseat / Woodruff in the description
     if d.get("kind") not in allowed:
         out.append(f"kind is {d.get('kind')!r}, Fusion type '{ftype}' gives {base_kind!r}")
 

@@ -15,8 +15,9 @@ SFDM      shank diameter
 RE        corner radius
 NOF       number of flutes
 SIG       point angle, included (drills, countersinks)
-TA        taper angle, half angle (chamfer mills)
+TA        taper angle, half angle (chamfer mills); off the axis (dovetails)
 TP        thread pitch (taps, thread mills)
+shoulder-diameter   neck diameter (undercut cutters)
 ========  =============================================
 
 A tool CamCraft would refuse is skipped here with the reason, instead of
@@ -72,7 +73,14 @@ KINDS = {
     "tap left hand": "tap",
     "thread mill": "thread_mill",
     "boring bar": "bore",
+    # Undercut cutters (CamCraft >= 0.25.0, #1444): a head wider than
+    # the neck that carries it. A slitting saw is a slot mill in Fusion.
+    "slot mill": "t_slot",
+    "lollipop mill": "lollipop",
+    "dovetail mill": "dovetail",
 }
+
+UNDERCUT = ("t_slot", "keyseat", "lollipop", "dovetail")
 
 DEFAULT_DRILL_ANGLE = 118.0
 
@@ -228,6 +236,9 @@ def convert_tool(entry: dict, options: Options) -> tuple[dict, list[str]]:
         d["kind"] = "bull_nose"
         d["corner_r"] = re_
 
+    if kind in UNDERCUT:
+        _undercut(d, entry, length, body, warnings)
+
     if kind == "taper":
         if ftype == "chamfer mill":
             ta = _num(g.get("TA"))
@@ -338,6 +349,10 @@ def why_not_sane(d: dict) -> str | None:
             return f"a thread mill of {dia} mm diameter leaves no core under a {p} mm pitch"
         if d["flute_len"] < p:
             return "a thread mill's cutting length is shorter than one pitch"
+    if kind in UNDERCUT:
+        why = _undercut_refusal(d)
+        if why:
+            return why
     for row in d.get("cutting_data", []):
         for k in ("stepdown", "stepover"):
             if k in row and not (math.isfinite(row[k]) and row[k] > 0):
@@ -345,7 +360,86 @@ def why_not_sane(d: dict) -> str | None:
     return None
 
 
+def lollipop_neck_meets(diameter: float, neck_d: float) -> float:
+    """Height above the tip where a neck of ``neck_d`` leaves the ball."""
+    r, sr = diameter / 2, neck_d / 2
+    return r + math.sqrt(max(r * r - sr * sr, 0.0))
+
+
+def _undercut_refusal(d: dict) -> str | None:
+    """CamCraft's undercut cutter rules (crates/tools/src/undercut.rs)."""
+    kind, dia, sd, fl, sl = d["kind"], d["diameter"], d["shank_d"], d["flute_len"], d["shank_len"]
+    if not 0 < sd < dia:
+        return f"the neck (shank diameter) {sd} mm must be over 0 and under the {dia} mm head diameter"
+    if sl <= 0:
+        return f"the neck length (shank length) {sl} mm must be over 0"
+    if kind == "dovetail":
+        a = d["tip_angle"]
+        if not 0 < a < 90:
+            return f"a dovetail cutter's flank angle {a} degrees must be over 0 and under 90"
+        top = dia / 2 - fl / math.tan(math.radians(a))
+        if top < sd / 2:
+            return (f"a dovetail cutter's {a:g} degree flank narrows its {dia} mm head to {2 * top:.3f} mm "
+                    f"at {fl} mm height, under its {sd} mm neck")
+    if kind == "lollipop":
+        r, meet = dia / 2, lollipop_neck_meets(dia, sd)
+        if not r <= fl <= meet + 1e-9:
+            return (f"a lollipop cutter's flute length {fl} mm must be from {r:g} mm (the ball's centre) "
+                    f"to {meet:.3f} mm (where the {sd} mm neck leaves the ball)")
+        if sl < dia - fl:
+            return f"a lollipop cutter's neck length {sl} mm must reach the ball top ({dia - fl:g} mm)"
+    return None
+
+
 # --- helpers ---------------------------------------------------------------
+
+
+def _undercut(d: dict, entry: dict, length, body: float | None, warnings: list[str]) -> None:
+    """Head and neck of a slot mill / slitting saw or a lollipop.
+
+    CamCraft reads ``flute_len`` as the head height (where the neck
+    starts), ``shank_d`` as the neck diameter and ``shank_len`` as the neck
+    length; nothing wider is modelled above the neck. So the neck takes the
+    wider of Fusion's shaft and shoulder diameters, which can only shorten
+    the reach CamCraft allows, never let the body pass where it would hit.
+    """
+    necks = [v for v in (length("SFDM"), length("shoulder-diameter")) if v and v > 0]
+    if not necks:
+        raise ToolRefused("no neck diameter (SFDM / shoulder-diameter)")
+    d["shank_d"] = max(necks)
+    desc = str(entry.get("description", "")).lower()
+    if d["kind"] == "t_slot" and ("keyseat" in desc or "woodruff" in desc):
+        d["kind"] = "keyseat"
+    if d["kind"] == "dovetail":
+        # Fusion's dovetail angle is off the tool axis (a "14 degree" router
+        # dovetail carries TA 14, a 60 degree machine dovetail TA 30);
+        # CamCraft's tip_angle is off the bottom face.
+        ta = _num((entry.get("geometry") or {}).get("TA"))
+        if ta is None or not 0 < ta < 90:
+            raise ToolRefused(f"dovetail taper angle (TA) {ta} must be over 0 and under 90 degrees")
+        d["tip_angle"] = round(90.0 - ta, 6)
+        if d["shank_d"] < d["diameter"]:
+            # Fusion gives the shank, not the neck under the head: where the
+            # flank narrows to that diameter the head is capped, so CamCraft
+            # sees a shallower cutter and a body no narrower than the real one.
+            r, sr = round(d["diameter"], 6) / 2, round(d["shank_d"], 6) / 2
+            top = math.floor((r - sr) * math.tan(math.radians(d["tip_angle"])) * 1e6) / 1e6
+            if d["flute_len"] > top:
+                warnings.append(f"head height {d['flute_len']:g} mm capped at {top:g} mm, where the "
+                                f"{ta:g} degree flank narrows to the {d['shank_d']:g} mm neck")
+                d["flute_len"] = top
+    if d["kind"] == "lollipop" and d["shank_d"] < d["diameter"]:
+        # Above the point where the neck leaves the ball there is only
+        # neck: a longer Fusion flute length is capped there, exactly.
+        # rounded down: the numbers are written to 6 decimals, and CamCraft
+        # allows this limit only 1e-9 of slack
+        meet = math.floor(lollipop_neck_meets(d["diameter"], d["shank_d"]) * 1e6) / 1e6
+        if d["flute_len"] > meet:
+            warnings.append(f"flute length {d['flute_len']:g} mm capped at {meet:.4g} mm, "
+                            f"where the {d['shank_d']:g} mm neck leaves the ball")
+            d["flute_len"] = meet
+    if body is not None:
+        d["shank_len"] = max(body - d["flute_len"], 0.0)
 
 
 def _version_for(d: dict) -> int:

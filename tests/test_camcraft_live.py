@@ -50,6 +50,16 @@ def edge_cases() -> list[dict]:
         tool(description="thread mill", type_="thread mill", geometry={"DC": 10, "LCF": 15, "TP": 1.5}),
         tool(description="face mill", type_="face mill", geometry={"DC": 50, "LCF": 5, "LB": 40, "SFDM": 22}),
         tool(description="boring bar", type_="boring bar", geometry={"DC": 12}),
+        tool(description="slitting saw", type_="slot mill", unit="inches",
+             geometry={"DC": 0.75, "LCF": 0.002, "SFDM": 0.25, "LB": 0.252, "shoulder-diameter": 0.25}),
+        tool(description="woodruff keyseat", type_="slot mill",
+             geometry={"DC": 19, "LCF": 4.8, "SFDM": 8, "LB": 30}),
+        tool(description="lollipop capped", type_="lollipop mill", unit="inches",
+             geometry={"DC": 0.375, "LCF": 0.35, "SFDM": 0.24, "LB": 2.15}),
+        tool(description="dovetail 60 capped", type_="dovetail mill", unit="inches",
+             geometry={"DC": 1, "LCF": 0.5, "SFDM": 0.5, "LB": 0.75, "TA": 30}),
+        tool(description="dovetail 14 router", type_="dovetail mill", unit="inches",
+             geometry={"DC": 1, "LCF": 1, "SFDM": 0.5, "LB": 1.5, "TA": 14}),
         star,
     ]
 

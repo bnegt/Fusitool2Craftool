@@ -9,7 +9,7 @@ CamCraft window. A Fusion script that exports **all** your tool libraries in
 one go is included.
 
 Pure Python 3.10+, no dependencies. Tested against CamCraft 0.25.0: all
-5,909 tools converted from 25 real libraries import without a change (see
+7,406 tools converted from 25 real libraries import without a change (see
 [Testing against CamCraft](#testing-against-camcraft)).
 
 ## How to run
@@ -212,9 +212,23 @@ This runs `camcraft-cli mcp --connect 127.0.0.1:7777` and calls CamCraft's
 | tap right/left hand | `tap` |
 | thread mill | `thread_mill` |
 | boring bar | `bore` |
+| slot mill, slitting saw | `t_slot` (`keyseat` if the name says keyseat/Woodruff) |
+| lollipop mill | `lollipop` |
+| dovetail mill | `dovetail` (angle 90 - `TA`: Fusion measures off the axis, CamCraft off the bottom face) |
 
 - Inch libraries are converted to mm (CamCraft only reads mm).
 - Stick-out: flute length `LCF`, shank length `LB - LCF`.
+- Undercut cutters (slot mills, slitting saws, lollipops, dovetails) need **CamCraft
+  0.25.0 or newer**; older versions refuse a library that holds one. The head
+  is `DC` x `LCF`, the neck is the wider of Fusion's shaft (`SFDM`) and
+  shoulder diameters (so CamCraft never lets the body pass where it would
+  hit), and the neck length is `LB - LCF`. A lollipop's flute length is
+  capped where the neck leaves the ball (CamCraft's limit; above it there is
+  only neck), with a warning. A dovetail's head is capped the same way where
+  its flank narrows to the neck: Fusion records the shank, not the narrower
+  neck under the head, so CamCraft sees a shallower cutter and a body no
+  narrower than the real one. A neck as wide as the head (Fusion gives no
+  narrower neck) is skipped.
 - Holder: Fusion's holder segments become CamCraft's holder cylinder
   (largest diameter x total height), which is a conservative envelope.
 - Speeds: the preset's `n` and `v_f`. Fusion leaves `v_f` empty on drills
@@ -237,7 +251,7 @@ This runs `camcraft-cli mcp --connect 127.0.0.1:7777` and calls CamCraft's
 | roundover bit (ball end mill with radius > D/2) | CamCraft has no form/roundover cutter |
 | reamer, counterbore | CamCraft has no kind for them ([NeoTech/Camcraft#897](https://github.com/NeoTech/Camcraft/issues/897)) |
 | form mill | CamCraft has no custom-profile mill (its `Form` kind is a lathe form gauge) |
-| lathe tools, slot/dovetail/lollipop mills, probes, engraving | not mapped yet |
+| lathe tools, probes, engraving | not mapped yet |
 | tools without rpm/feed | skipped unless `--default-rpm` / `--default-feed` are given |
 
 A ball end mill whose radius is within 10 % of D/2 is still a ball nose
@@ -282,8 +296,8 @@ CAMCRAFT_CLI=~/camcraft-0.25.0-linux-x86_64/camcraft-cli \
     python3 -m unittest discover -s tests -t .
 ```
 
-Last run (CamCraft 0.25.0, 2026-11-23): 25 libraries, 5,909 tools written,
-5,909 imported, none renamed or skipped.
+Last run (CamCraft 0.25.0, 2026-11-23): 25 libraries, 7,406 tools written,
+7,406 imported, none renamed or skipped.
 
 ### CamCraft upstream check
 
