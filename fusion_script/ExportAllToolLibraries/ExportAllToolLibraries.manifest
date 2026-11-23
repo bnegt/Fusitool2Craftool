@@ -1,0 +1,8 @@
+{
+  "autodeskProduct": "Fusion",
+  "type": "script",
+  "author": "",
+  "description": {"": "Export every Local, Cloud and Hub tool library to .json files (read-only)"},
+  "supportedOS": "windows|mac",
+  "editEnabled": true
+}

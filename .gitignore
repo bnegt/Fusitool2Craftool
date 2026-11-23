@@ -225,3 +225,5 @@ __marimo__/
 # Personal Fusion tool library (sanity check only, never committed)
 1335.tools
 private/
+# ...but the Fusion script ships its manifest
+!fusion_script/**/*.manifest

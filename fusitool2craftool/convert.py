@@ -111,6 +111,8 @@ class Conversion:
     """Tool name -> the Fusion entry it was converted from."""
     input_tools: int = 0
     """Fusion entries that are tools (holders not counted)."""
+    holders: int = 0
+    """Fusion holder entries (not converted: CamCraft imports no stand-alone holders)."""
 
 
 def unsupported_category(entry: dict) -> str | None:
@@ -124,7 +126,9 @@ def unsupported_category(entry: dict) -> str | None:
         return "roundover bit"
     if ftype == "radius mill":
         return "roundover bit"
-    return None
+    # No CamCraft kind yet: reamer / counterbore NeoTech/Camcraft#897; a
+    # custom-profile mill (CamCraft's Form kind is a lathe form gauge).
+    return {"reamer": "reamer", "counter bore": "counterbore", "form mill": "form mill"}.get(ftype)
 
 
 class ToolRefused(ValueError):
@@ -141,6 +145,7 @@ def convert(entries: list[dict], options: Options | None = None) -> Conversion:
     taken: set[str] = set()
     for entry in entries:
         if entry.get("type") == "holder":
+            out.holders += 1
             continue
         out.input_tools += 1
         label = _label(entry)
@@ -255,7 +260,7 @@ def convert_tool(entry: dict, options: Options) -> tuple[dict, list[str]]:
 
     d["holder_d"], d["holder_len"] = _holder(entry, options, warnings)
 
-    rpm, feed, preset = _speeds(entry, options, unit, warnings)
+    rpm, feed, preset = _speeds(entry, options, unit, warnings, d["kind"], d["pitch"])
     d["material_group"] = _material_group(preset, options)
     d["rpm"] = rpm
     d["feed"] = feed
@@ -429,8 +434,24 @@ def _holder(entry: dict, options: Options, warnings: list[str]) -> tuple[float, 
     return options.holder_d, options.holder_len
 
 
+def presets_of(entry: dict) -> list[dict]:
+    """The tool's feed/speed presets.
+
+    Current Fusion writes ``start-values: {"presets": [...]}``; older
+    libraries (format version 1) hold one unnamed set as
+    ``start-values: {"*": {...}}``, read here as a preset named "*".
+    """
+    sv = entry.get("start-values")
+    if not isinstance(sv, dict):
+        return []
+    presets = [p for p in (sv.get("presets") or []) if isinstance(p, dict)]
+    if not presets and isinstance(sv.get("*"), dict):
+        presets = [{"name": "*", **sv["*"]}]
+    return presets
+
+
 def _pick_preset(entry: dict, options: Options) -> dict | None:
-    presets = [p for p in ((entry.get("start-values") or {}).get("presets") or []) if isinstance(p, dict)]
+    presets = presets_of(entry)
     if not presets:
         return None
     if options.preset:
@@ -441,11 +462,37 @@ def _pick_preset(entry: dict, options: Options) -> dict | None:
     return presets[0]
 
 
-def _speeds(entry: dict, options: Options, unit: float, warnings: list[str]):
+def preset_feed(preset: dict, kind: str, pitch: float, unit: float) -> tuple[float | None, str]:
+    """A preset's feed in mm/min and the Fusion field it came from.
+
+    Mills carry their feed in ``v_f``. Fusion keeps a drill's feed in
+    ``v_f_plunge`` or as feed per revolution ``f_n`` (and leaves ``v_f`` at
+    0 or out), and a tap feeds one pitch per revolution - the feed
+    CamCraft's tapping cycle posts anyway.
+    """
+    rpm = _num(preset.get("n"))
+    vf = _num(preset.get("v_f"))
+    if vf and vf > 0:
+        return vf * unit, "v_f"
+    if kind == "drill":
+        plunge = _num(preset.get("v_f_plunge"))
+        if plunge and plunge > 0:
+            return plunge * unit, "v_f_plunge"
+        fn = _num(preset.get("f_n"))
+        if fn and fn > 0 and rpm and rpm > 0:
+            return fn * rpm * unit, "f_n x n"
+    if kind == "tap" and pitch > 0 and rpm and rpm > 0:
+        return pitch * rpm, "n x pitch"
+    return None, ""
+
+
+def _speeds(entry: dict, options: Options, unit: float, warnings: list[str],
+            kind: str = "end_mill", pitch: float = 0.0):
     preset = _pick_preset(entry, options)
     rpm = _num(preset.get("n")) if preset else None
-    feed = _num(preset.get("v_f")) if preset else None
-    feed = feed * unit if feed is not None else None
+    feed, source = preset_feed(preset, kind, pitch, unit) if preset else (None, "")
+    if source and source != "v_f":
+        warnings.append(f"feed {feed:g} mm/min taken from Fusion's {source} (the preset has no v_f)")
     if preset and options.preset and str(preset.get("name", "")).strip().lower() != options.preset.strip().lower():
         warnings.append(f"no preset named '{options.preset}': used '{preset.get('name')}'")
     if not rpm or rpm <= 0:
@@ -455,7 +502,10 @@ def _speeds(entry: dict, options: Options, unit: float, warnings: list[str]):
         else:
             raise ToolRefused("no spindle speed in Fusion (give --default-rpm)")
     if not feed or feed <= 0:
-        if options.default_feed:
+        if kind == "tap" and pitch > 0:
+            feed = rpm * pitch
+            warnings.append(f"no feed in Fusion: tap feed {feed:g} mm/min = rpm x pitch")
+        elif options.default_feed:
             feed = options.default_feed
             warnings.append(f"no cutting feed in Fusion: default {feed:g} mm/min used")
         else:
