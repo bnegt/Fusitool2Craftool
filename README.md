@@ -2,11 +2,15 @@
 
 Tool library converter for Fusion 360 to [CamCraft](https://github.com/NeoTech/Camcraft).
 
-Reads a Fusion 360 tool library (`.tools` or `.json` export) and writes a
-CamCraft tool library (`.camtools`). It can also import the result straight
-into a running CamCraft window.
+Reads a Fusion 360 tool library (`.tools` or `.json` export), or a whole
+folder of them, and writes CamCraft tool libraries (`.camtools`). It can also
+check the result in a headless CamCraft, or import it straight into a running
+CamCraft window. A Fusion script that exports **all** your tool libraries in
+one go is included.
 
-Pure Python 3.10+, no dependencies.
+Pure Python 3.10+, no dependencies. Tested against CamCraft 0.25.0: all
+5,909 tools converted from 25 real libraries import without a change (see
+[Testing against CamCraft](#testing-against-camcraft)).
 
 ## How to run
 
@@ -15,6 +19,12 @@ Pure Python 3.10+, no dependencies.
 In Fusion, open the **Tool Library** (Manufacture workspace → Manage → Tool
 Library), right-click your library and choose **Export**. Save it as a
 `.tools` file (or `.json`). Both formats work.
+
+**Many libraries?** Fusion only exports one at a time. The Fusion script in
+[`fusion_script/ExportAllToolLibraries`](fusion_script/ExportAllToolLibraries/README.md)
+exports every Local, Cloud and Hub library in one run (one `.json` each,
+read-only). Install it in Fusion's Scripts list (Shift+S), run it, pick a
+folder, then convert the whole folder in step 3.
 
 ### 2. Get the converter
 
@@ -49,6 +59,13 @@ the output check failed - don't import that file.
 Common variations:
 
 ```sh
+# A whole folder of libraries (e.g. the ExportAllToolLibraries export):
+# one .camtools per library, next to each .json
+python3 -m fusitool2craftool ~/"Documents/Fusion tool libraries"
+
+# ...or into a separate folder, keeping the subfolders
+python3 -m fusitool2craftool ~/"Documents/Fusion tool libraries" -o ~/cam/libraries
+
 # Choose where the output goes
 python3 -m fusitool2craftool MyTools.tools -o ~/cam/shop.camtools
 
@@ -78,6 +95,29 @@ python3 -m fusitool2craftool MyTools.tools --push 7777
 
 The tools land in the document open in the CamCraft window, as one undo step.
 See [Import into a running CamCraft](#import-into-a-running-camcraft) for the options.
+
+**Check first (optional):** `--check` imports the file into a headless
+CamCraft (no window) and prints what CamCraft would add. Works for a folder
+too, one library at a time:
+
+```sh
+python3 -m fusitool2craftool ~/"Documents/Fusion tool libraries" --check
+```
+
+#### Getting `camcraft-cli`
+
+It comes with every CamCraft install. Download from
+[CamCraft's releases](https://github.com/NeoTech/Camcraft/releases)
+(`.deb`, `.rpm`, Arch `.pkg.tar.zst`, AppImage, flatpak, snap, macOS,
+Windows). Without installing anything, the Linux `.tar.gz` holds
+`camcraft-cli` and `camcraft-ui` ready to run:
+
+```sh
+curl -LO https://github.com/NeoTech/Camcraft/releases/download/v0.25.0/camcraft-0.25.0-linux-x86_64.tar.gz
+tar xzf camcraft-0.25.0-linux-x86_64.tar.gz
+python3 -m fusitool2craftool MyTools.tools --check \
+    --camcraft-cli ./camcraft-0.25.0-linux-x86_64/camcraft-cli
+```
 
 ### Optional: install as a command
 
@@ -144,7 +184,7 @@ This runs `camcraft-cli mcp --connect 127.0.0.1:7777` and calls CamCraft's
 
 | Option | Meaning |
 |---|---|
-| `--push PORT` | import into the CamCraft window listening on PORT |
+| `--push PORT` | import into the CamCraft window listening on PORT (one library at a time, not a folder) |
 | `--mode add\|update\|replace` | `update` (default) refreshes same-named tools; `add` renames clashes; `replace` also removes tools not in the library (unless used) |
 | `--host HOST` | CamCraft host (default `127.0.0.1`) |
 | `--camcraft-cli PATH` | `camcraft-cli` if it is not on `PATH` |
@@ -177,8 +217,15 @@ This runs `camcraft-cli mcp --connect 127.0.0.1:7777` and calls CamCraft's
 - Stick-out: flute length `LCF`, shank length `LB - LCF`.
 - Holder: Fusion's holder segments become CamCraft's holder cylinder
   (largest diameter x total height), which is a conservative envelope.
-- Speeds: the preset's `n` and `v_f`. Stepdown/stepover go into a cutting
-  data row (`unknown` material unless `--material` is given).
+- Speeds: the preset's `n` and `v_f`. Fusion leaves `v_f` empty on drills
+  and taps, so a drill takes its plunge feed `v_f_plunge` (or feed per rev
+  `f_n` x rpm) and a tap feeds rpm x pitch, which is what CamCraft's tapping
+  cycle runs; a warning names the source. Older libraries (format version 1)
+  keep one unnamed preset as `start-values: {"*": ...}`; it is read the same.
+  Stepdown/stepover go into a cutting data row (`unknown` material unless
+  `--material` is given).
+- Holders: holder entries (and holder-only libraries) are counted and
+  reported, not converted - CamCraft imports no stand-alone holders.
 - Vendor, product id, product link, flute count, tool material (HSS/carbide)
   and the Fusion tool number are carried over.
 
@@ -188,7 +235,9 @@ This runs `camcraft-cli mcp --connect 127.0.0.1:7777` and calls CamCraft's
 |---|---|
 | tapered ball mill / tapered mill | CamCraft has no tapered cutter |
 | roundover bit (ball end mill with radius > D/2) | CamCraft has no form/roundover cutter |
-| lathe tools, slot/dovetail/lollipop mills, probes, engraving, form mills | not mapped yet |
+| reamer, counterbore | CamCraft has no kind for them ([NeoTech/Camcraft#897](https://github.com/NeoTech/Camcraft/issues/897)) |
+| form mill | CamCraft has no custom-profile mill (its `Form` kind is a lathe form gauge) |
+| lathe tools, slot/dovetail/lollipop mills, probes, engraving | not mapped yet |
 | tools without rpm/feed | skipped unless `--default-rpm` / `--default-feed` are given |
 
 A ball end mill whose radius is within 10 % of D/2 is still a ball nose
@@ -197,8 +246,10 @@ would refuse is skipped too, because CamCraft refuses a whole library over a
 single bad tool. All skipped tools are listed in red with the reason; with
 `--strict` the run fails instead.
 
-**Tool numbers:** CamCraft currently assigns its own T numbers when it
-imports a `.camtools` file; the Fusion number is written but may not be used.
+**Tool numbers:** the Fusion tool number is written as `number`, but
+CamCraft does not import numbers from a `.camtools` file (only from
+PathPilot/Hurco tool tables): it gives imported tools its own lowest free T
+numbers. Tools that share a Fusion number therefore never clash.
 
 ## Development
 
@@ -206,8 +257,33 @@ imports a `.camtools` file; the Fusion number is written but may not be used.
 python3 -m unittest discover -s tests -t .
 ```
 
-Put your own Fusion library in `private/` (git-ignored); the tests then also
-check that every tool in it converts and that the output verifies.
+Put your own Fusion libraries in `private/` (git-ignored), for example a whole
+ExportAllToolLibraries export; subfolders are searched. The tests then also
+check that every library converts and verifies, and that any skipped tool
+belongs to a named unsupported family (tapered, roundover, reamer, ...).
+
+Real third-party libraries to test against (RobbJack, Haas/Matsuura/Tormach
+shop libraries, Carbide 3D, ...) are listed in
+[TEST_LIBRARIES.md](TEST_LIBRARIES.md), with a script that downloads them
+into `private/test-libraries/`.
+
+### Testing against CamCraft
+
+`tests/test_camcraft_live.py` imports converted libraries into a real,
+headless CamCraft: the sample fixture, an edge-case library (inch units,
+left-hand tap, drill/tap feeds, legacy presets, material rows, thread mill,
+chamfer, face mill, boring bar) and every library in `private/`. Every tool
+written must come back as added, none renamed or skipped. It runs when
+`camcraft-cli` is on `PATH` or `CAMCRAFT_CLI` points at it, and is skipped
+otherwise:
+
+```sh
+CAMCRAFT_CLI=~/camcraft-0.25.0-linux-x86_64/camcraft-cli \
+    python3 -m unittest discover -s tests -t .
+```
+
+Last run (CamCraft 0.25.0, 2026-11-23): 25 libraries, 5,909 tools written,
+5,909 imported, none renamed or skipped.
 
 ### CamCraft upstream check
 
@@ -216,9 +292,11 @@ CamCraft can now handle the tools we skip
 ([#1](https://github.com/bnegt/Fusitool2Craftool/issues/1)):
 
 - CamCraft issues [#895](https://github.com/NeoTech/Camcraft/issues/895)
-  (tapered ball mills, V-bit tip diameter) and
-  [#896](https://github.com/NeoTech/Camcraft/issues/896) (roundover bits)
-  are still open
+  (tapered ball mills, V-bit tip diameter),
+  [#896](https://github.com/NeoTech/Camcraft/issues/896) (roundover bits),
+  [#897](https://github.com/NeoTech/Camcraft/issues/897) (reamers,
+  counterbores) and [#3368](https://github.com/NeoTech/Camcraft/issues/3368)
+  (tapered mill tip forms) are still open
 - CamCraft's list of tool kinds is unchanged
 
 If either fails, CamCraft has changed: update the converter, then update
@@ -232,5 +310,6 @@ raises GitHub's rate limit.
 | `convert.py` | map Fusion tools to CamCraft definitions, apply CamCraft's sanity rules |
 | `camtools.py` | write the `.camtools` envelope |
 | `verify.py` | read the written file back and compare it with the Fusion source |
-| `push.py` | import into CamCraft through `camcraft-cli mcp` |
-| `cli.py` | command line, coloured report |
+| `push.py` | import into CamCraft through `camcraft-cli mcp` (`--push`, `--check`) |
+| `cli.py` | command line (one library or a folder of them), coloured report |
+| `fusion_script/` | Fusion script that exports all tool libraries (runs inside Fusion, not part of the package) |
