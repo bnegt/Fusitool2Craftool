@@ -11,7 +11,7 @@ from unittest import mock
 
 from fusitool2craftool import camtools
 from fusitool2craftool.cli import main
-from fusitool2craftool.convert import Options, convert, why_not_sane
+from fusitool2craftool.convert import Options, convert, preset_material, why_not_sane
 from fusitool2craftool.verify import verify_file
 from fusitool2craftool.fusion import FusionLibraryError, load_library, parse_library
 
@@ -160,6 +160,36 @@ class ConvertTests(unittest.TestCase):
     def test_unknown_material_refused(self):
         with self.assertRaises(ValueError):
             convert([tool()], Options(material="unobtainium"))
+
+    def test_unreleased_material_needs_flag(self):
+        # CamCraft 0.25.0 refuses a library naming "mdf"
+        with self.assertRaisesRegex(ValueError, "--unreleased-materials"):
+            convert([tool()], Options(material="mdf"))
+        d, _ = one(tool(), Options(material="mdf", unreleased_materials=True))
+        self.assertEqual(d["cutting_data"][0]["material"], "mdf")
+
+    def test_default_rpm_for_preset_without_speed_verifies(self):
+        result = convert([tool(presets=[{"name": "Wood", "v_f": 900}])], Options(default_rpm=18000))
+        self.assertEqual(result.skipped, [])
+        with tempfile.TemporaryDirectory() as tmp:
+            path = camtools.write(result, Path(tmp) / "out.camtools")
+            self.assertEqual(verify_file(path, result), [])
+
+    def test_near_ball_bull_nose_is_ball(self):
+        # RobbJack lists D24.9999 R12.5001 bull noses: a ball, vendor-rounded
+        d, result = one(tool("bull nose end mill", geometry={"DC": 24.9999, "RE": 12.5001, "LCF": 30, "LB": 60}))
+        self.assertEqual((d["kind"], d["corner_r"]), ("ball_nose", 12.49995))
+        self.assertTrue(any("imported as a ball nose" in w for w in result.warnings))
+        d, result = one(tool("bull nose end mill", geometry={"DC": 10, "RE": 5}))
+        self.assertEqual((d["kind"], result.warnings[-1:] and "ball" in result.warnings[-1]), ("ball_nose", False))
+        d, _ = one(tool("bull nose end mill", geometry={"DC": 10, "RE": 4.5}))
+        self.assertEqual((d["kind"], d["corner_r"]), ("bull_nose", 4.5))  # a real near-ball bull nose
+        r = convert([tool("bull nose end mill", geometry={"DC": 10, "RE": 6})])
+        self.assertEqual(r.skipped[0].category, "roundover bit")
+        with tempfile.TemporaryDirectory() as tmp:
+            res = convert([tool("bull nose end mill", geometry={"DC": 24.9999, "RE": 12.5001, "LCF": 30, "LB": 60})])
+            path = camtools.write(res, Path(tmp) / "out.camtools")
+            self.assertEqual(verify_file(path, res), [])
 
     def test_holder_segments(self):
         e = tool(holder={"unit": "millimeters", "segments": [
@@ -318,6 +348,76 @@ class SkipCategoryTests(unittest.TestCase):
         text = err.getvalue()
         self.assertIn("\033[31mNOT IMPORTED: 1 tapered ball mill", text)
         self.assertIn("\033[31mskipped [tapered ball mill]", text)
+
+
+class PresetRowTests(unittest.TestCase):
+    """--all-presets: one cutting data row per preset naming a material."""
+
+    def test_preset_names(self):
+        cases = {
+            "6061(T4-T6) Aluminum (RobbJack tested)": "aluminium_6061",
+            "4140 Steel (RobbJack tested)": "mild_steel",
+            "Stainless Steel - Drilling": "stainless_304",
+            "Gray Iron (RobbJack tested)": "grey_cast_iron",
+            "Free-Cutting Brass": "brass",
+            "Acetal": "plastics_pom",
+            "MDF/Laminate": "mdf",
+            "P20 (30-40hrc) Tool Steel": None,   # hardened: not mild steel
+            "440C (30-40hrc) Stainless": None,
+            "6AL-4V Titanium": None,             # no CamCraft group
+            "Aluminum/Copper/Brass": None,       # ambiguous
+            "Default preset": None,
+        }
+        for name, want in cases.items():
+            with self.subTest(name=name):
+                self.assertEqual(preset_material(name), want)
+
+    def presets(self):
+        return [
+            {"name": "6061 Aluminum", "n": 18000, "v_f": 2000, "stepdown": 3, "use-stepdown": True},
+            {"name": "4140 Steel", "n": 6000, "v_f": 500},
+            {"name": "Aluminum finish", "n": 20000, "v_f": 1500},   # second aluminium: reported
+            {"name": "Titanium", "n": 3000, "v_f": 200},            # no group: reported
+            {"name": "Hardwood", "n": 16000, "v_f": 3000},          # unreleased word: reported
+            {"name": "Acetal", "n": 12000},                         # no feed: reported
+        ]
+
+    def test_rows_per_material(self):
+        result = convert([tool(presets=self.presets())], Options(all_presets=True))
+        rows = result.tools[0]["definition"]["cutting_data"]
+        self.assertEqual([r["material"] for r in rows], ["unknown", "aluminium_6061", "mild_steel"])
+        self.assertEqual(rows[1], {"material": "aluminium_6061", "rpm": 18000, "feed": 2000, "stepdown": 3})
+        outcomes = {name: outcome for (name, outcome) in result.presets}
+        self.assertEqual(outcomes["Aluminum finish"], "duplicate aluminium_6061")
+        self.assertEqual(outcomes["Titanium"], "unmatched")
+        self.assertIn("newer than 0.25.0", outcomes["Hardwood"])
+        self.assertEqual(outcomes["Acetal"], "no speeds")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = camtools.write(result, Path(tmp) / "out.camtools")
+            self.assertEqual(verify_file(path, result), [])
+
+    def test_material_option_keeps_chosen_preset(self):
+        # --material names the chosen (first) preset; a preset mapping to the same word is a duplicate
+        result = convert([tool(presets=self.presets())],
+                         Options(all_presets=True, material="brass", unreleased_materials=True))
+        rows = result.tools[0]["definition"]["cutting_data"]
+        self.assertEqual([r["material"] for r in rows], ["brass", "mild_steel", "aluminium_6061", "hardwood"])
+        self.assertEqual(rows[0]["rpm"], 18000)
+
+    def test_without_flag_no_extra_rows(self):
+        d, _ = one(tool(presets=self.presets()))
+        self.assertEqual([r["material"] for r in d["cutting_data"]], ["unknown"])
+
+    def test_cli_report(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "lib.json"
+            src.write_text(json.dumps({"data": [tool(presets=self.presets())]}))
+            out = io.StringIO()
+            with redirect_stdout(out), redirect_stderr(io.StringIO()):
+                self.assertEqual(main([str(src), "--all-presets"]), 0)
+        text = out.getvalue()
+        self.assertIn("'4140 Steel' -> mild_steel (1 tool)", text)
+        self.assertIn("'Titanium' -> unmatched (1 tool)", text)
 
 
 class FolderTests(unittest.TestCase):

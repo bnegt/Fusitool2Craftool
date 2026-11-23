@@ -12,7 +12,7 @@ import json
 import math
 from pathlib import Path
 
-from .convert import INCH, KINDS, Conversion, presets_of
+from .convert import INCH, KINDS, MATERIALS, Conversion, presets_of
 
 TOL = 1e-3  # mm / rpm, after rounding to 6 decimals
 
@@ -105,8 +105,10 @@ def compare(d: dict, entry: dict) -> list[str]:
 
     base_kind = KINDS.get(ftype)
     allowed = {base_kind}
-    if base_kind in ("end_mill", "ball_nose"):
-        allowed.add("bull_nose")  # a corner radius / rounded ball radius moves it
+    if base_kind in ("end_mill", "ball_nose", "bull_nose"):
+        # a corner radius moves an end mill to bull nose; a rounded ball
+        # radius a ball to bull nose; a radius of (about) D/2 makes a ball
+        allowed |= {"bull_nose", "ball_nose"}
     if base_kind == "t_slot":
         allowed.add("keyseat")  # named keyseat / Woodruff in the description
     if d.get("kind") not in allowed:
@@ -126,38 +128,50 @@ def compare(d: dict, entry: dict) -> list[str]:
     if isinstance(number, (int, float)) and number > 0 and d.get("number") != int(number):
         out.append(f"number is {d.get('number')}, Fusion tool number is {int(number)}")
 
-    preset = _matching_preset(entry, d)
-    if preset is None and presets_of(entry):
+    if presets_of(entry) and _matching_preset(entry, d) is None:
         out.append(f"rpm {d.get('rpm')} / feed {d.get('feed')} match no Fusion preset")
+
+    rows = d.get("cutting_data") or []
+    words = [r.get("material") for r in rows]
+    for w in sorted({w for w in words if words.count(w) > 1}):
+        out.append(f"cutting data names {w} twice")
+    for r in rows:
+        if r.get("material") not in MATERIALS + ("unknown",):
+            out.append(f"cutting data material {r.get('material')!r} is not a CamCraft material")
+        elif _matching_preset(entry, {**d, "rpm": r.get("rpm"), "feed": r.get("feed")}) is None:
+            out.append(f"cutting data for {r['material']}: rpm {r.get('rpm')} / feed {r.get('feed')} "
+                       f"match no Fusion preset")
     return out
 
 
 def _matching_preset(entry: dict, d: dict) -> dict | None:
-    """The preset whose speed and feed the definition carries (unit-scaled).
+    """The preset the definition's speed and feed come from (unit-scaled).
 
     Recomputed here from Fusion's fields, not through the converter: the
     feed is ``v_f``; for a drill also ``v_f_plunge`` or ``f_n`` x ``n``;
-    for a tap ``n`` x pitch (what CamCraft's tapping cycle feeds).
+    for a tap ``n`` x pitch (what CamCraft's tapping cycle feeds). A
+    number the preset does not state may be a --default-rpm/--default-feed
+    (or, for a tap, rpm x pitch).
     """
     unit = INCH if str(entry.get("unit", "")).lower() in ("inches", "inch", "in") else 1.0
-    kind = d.get("kind")
+    kind, pitch = d.get("kind"), d.get("pitch", 0)
     rpm, feed = d.get("rpm", -1), d.get("feed", -1)
+    if not (_is_num(rpm) and _is_num(feed)):
+        return None
     for p in presets_of(entry):
-        n = p.get("n")
-        if not _is_num(n) or not math.isclose(rpm, n, abs_tol=TOL):
+        n = p.get("n") if _is_num(p.get("n")) and p.get("n") > 0 else None
+        if n is not None and not math.isclose(rpm, n, abs_tol=TOL):
             continue
         feeds = [p.get("v_f")]
         if kind == "drill":
             feeds.append(p.get("v_f_plunge"))
-            if _is_num(p.get("f_n")):
+            if n is not None and _is_num(p.get("f_n")):
                 feeds.append(p["f_n"] * n)
         feeds = [f * unit for f in feeds if _is_num(f) and f > 0]
         if kind == "tap":
-            feeds.append(n * d.get("pitch", 0))
-        if any(math.isclose(feed, f, abs_tol=TOL, rel_tol=1e-9) for f in feeds):
+            feeds.append(rpm * pitch)
+        if not feeds or any(math.isclose(feed, f, abs_tol=TOL, rel_tol=1e-9) for f in feeds):
             return p
-    if kind == "tap" and math.isclose(feed, rpm * d.get("pitch", 0), abs_tol=TOL):
-        return {"name": "rpm x pitch"}  # tap feed derived from the running rpm
     return None
 
 

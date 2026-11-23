@@ -9,7 +9,7 @@ from collections import Counter
 from pathlib import Path
 
 from . import __version__, camtools
-from .convert import MATERIALS, Options, convert
+from .convert import MATERIALS, RELEASED_MATERIALS, UNRELEASED_MATERIALS, Options, convert
 from .fusion import FusionLibraryError, load_library
 from .push import MODES, PushError, push
 from .verify import verify_file
@@ -58,7 +58,15 @@ def build_parser() -> argparse.ArgumentParser:
     conv.add_argument("--preset", help="Fusion preset name to take rpm/feed from (default: each tool's first)")
     conv.add_argument("--material", choices=MATERIALS, metavar="WORD",
                       help="CamCraft workpiece material the presets are for "
-                      f"({', '.join(MATERIALS)})")
+                      f"({', '.join(RELEASED_MATERIALS)}; with --unreleased-materials also "
+                      f"{', '.join(UNRELEASED_MATERIALS)})")
+    conv.add_argument("--unreleased-materials", action="store_true",
+                      help="allow the wood/plastic material words CamCraft has after 0.25.0 "
+                      "(0.25.0 refuses a library that names them)")
+    conv.add_argument("--all-presets", action="store_true",
+                      help="also write one cutting data row per Fusion preset whose name names a "
+                      "CamCraft material (e.g. '6061 aluminum', '4140 steel', 'acetal'); "
+                      "the others are listed")
     conv.add_argument("--holder-d", type=float, default=50.0, metavar="MM",
                       help="holder diameter for tools without a Fusion holder (default 50)")
     conv.add_argument("--holder-len", type=float, default=40.0, metavar="MM",
@@ -92,7 +100,14 @@ def main(argv: list[str] | None = None) -> int:
         holder_len=args.holder_len,
         default_rpm=args.default_rpm,
         default_feed=args.default_feed,
+        all_presets=args.all_presets,
+        unreleased_materials=args.unreleased_materials,
     )
+    try:
+        convert([], options)  # checks --material against the CamCraft it is for
+    except ValueError as e:
+        print(red(f"error: {e}"), file=sys.stderr)
+        return 1
     if args.input.is_dir():
         return convert_folder(args, options)
     output = args.output or args.input.with_suffix(camtools.EXTENSION)
@@ -135,6 +150,22 @@ def convert_folder(args, options: Options) -> int:
     return 0
 
 
+def print_preset_report(report: Counter, limit: int = 15) -> None:
+    """--all-presets: which preset names became which material rows."""
+    matched = [(k, n) for k, n in report.items() if k[1] in MATERIALS]
+    other = [(k, n) for k, n in report.items() if k[1] not in MATERIALS]
+    for title, rows in (("cutting rows from presets", matched),
+                        ("presets not written as rows", other)):
+        if not rows:
+            continue
+        print(f"{title}:")
+        rows.sort(key=lambda kn: (-kn[1], kn[0]))
+        for (name, outcome), n in rows[:limit]:
+            print(f"  '{name}' -> {outcome} ({n} {plural('tool', n)})")
+        if len(rows) > limit:
+            print(f"  ... and {len(rows) - limit} more")
+
+
 def convert_file(src: Path, output: Path, args, options: Options, quiet_empty: bool = False) -> str:
     """Convert, write, verify (and optionally check/push) one library."""
     try:
@@ -154,6 +185,8 @@ def convert_file(src: Path, output: Path, args, options: Options, quiet_empty: b
         listed = ", ".join(f"{n} {plural(cat, n)}" for cat, n in sorted(families.items()))
         print(red(f"NOT IMPORTED: {listed} - CamCraft has no tool type for them, "
                   f"so they are skipped"), file=sys.stderr)
+    if options.all_presets:
+        print_preset_report(result.presets)
     if result.holders:
         print(f"{result.holders} {plural('holder', result.holders)} not converted "
               f"(CamCraft imports no stand-alone holders; a tool's own holder is kept as its holder size)")
