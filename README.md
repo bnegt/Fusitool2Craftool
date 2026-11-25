@@ -238,7 +238,16 @@ This runs `camcraft-cli mcp --connect 127.0.0.1:7777` and calls CamCraft's
 | dovetail mill | `dovetail` (angle 90 - `TA`: Fusion measures off the axis, CamCraft off the bottom face); with a corner radius it is skipped |
 
 - Inch libraries are converted to mm (CamCraft only reads mm).
-- Stick-out: flute length `LCF`, shank length `LB - LCF`.
+- Stick-out: flute length `LCF`, shank length `LB - LCF`. CamCraft has one
+  shank cylinder, of Fusion's `SFDM`. Where Fusion's **shoulder or shaft is
+  wider** than that (face mill bodies, countersinks, exchangeable heads,
+  lollipops that state their neck as `SFDM`), the shank is its first straight
+  piece and the rest up to `LB` is drawn under the holder, so CamCraft sees it
+  ([#43](https://github.com/bnegt/Fusitool2Craftool/issues/43)). A narrower
+  shoulder is not written: the shank stays `SFDM`, which is safe. A shoulder
+  length without a diameter is as wide as the first shaft segment starts; on a
+  tool without segments it is unknown, and the shank is written. The output
+  check compares the body along its whole length.
 - Undercut cutters (slot mills, slitting saws, lollipops, dovetails): the head
   is `DC` x `LCF`, the neck is the wider of Fusion's shaft (`SFDM`) and
   shoulder diameters (so CamCraft never lets the body pass where it would
@@ -249,7 +258,8 @@ This runs `camcraft-cli mcp --connect 127.0.0.1:7777` and calls CamCraft's
   neck under the head, so CamCraft sees a shallower cutter and a body no
   narrower than the real one.
 - Undercut cutters **with a shank as wide as the head** (most Harvey keyseat
-  and dovetail cutters): the neck is the narrow start of Fusion's shoulder and
+  and dovetail cutters), or with a shaft that gets wider than their neck (most
+  Harvey lollipops): the neck is the narrow start of Fusion's shoulder and
   shaft segments, as far as it stays that narrow. The rest of the shaft is
   drawn under the holder, so CamCraft holds a slot deeper than the neck's
   reach. Without a holder in Fusion that holder is the default one

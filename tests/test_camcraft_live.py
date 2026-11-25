@@ -28,7 +28,7 @@ from fusitool2craftool.convert import Options, convert
 from fusitool2craftool.fusion import load_library
 from fusitool2craftool.push import PROTOCOL_VERSION, PushError, _close, _content_text, _Session, push
 
-from .test_convert import ARBOR, DEFAULT_SPEEDS, FIXTURES, PRIVATE, corner_chamfer, holder, keyseat, multi_form, saw, single_form, tapered, tool
+from .test_convert import ARBOR, DEFAULT_SPEEDS, FIXTURES, PRIVATE, corner_chamfer, holder, keyseat, multi_form, saw, shafted, single_form, tapered, tool
 from .test_lathe import TYPES, lathe
 
 CLI = os.environ.get("CAMCRAFT_CLI") or shutil.which("camcraft-cli")
@@ -58,6 +58,9 @@ def edge_cases() -> list[dict]:
              geometry={"DC": 0.125, "LCF": 0.375, "LB": 0.92, "SFDM": 0.125, "SIG": 60},
              presets=[{"name": "P", "n": 4000, "v_f_plunge": 8}]),
         multi_form(description="M5-0.80 THREAD MILL"),
+        shafted(description="shaft wider than the shank", segments=[(10, 10, 10), (5, 10, 16)]),
+        shafted("face mill", {"DC": 50, "shoulder-length": 23, "shoulder-diameter": 50}, [(4, 26, 22)], description="collar"),
+        shafted(geometry={"SFDM": 5}, segments=[(10, 12, 5)], description="cone above the flutes"),
         saw(description="saw without an arbor"),
         saw(description="saw on its arbor", holder=ARBOR),
         tool(description="tap M8 left", type_="tap left hand", geometry={"DC": 8, "TP": 1.25},
@@ -397,6 +400,19 @@ class UndercutLiveTests(unittest.TestCase):
         slot = [(8, 0), (8 - top * math.tan(math.radians(30)), top)]
         self.assertEqual(self.findings(e, 15, slot, 2 * slot[-1][0]), set())
         self.assertEqual(self.findings(e, 25, slot, 2 * slot[-1][0]), {"shank_hit"})
+
+    def test_neck_stated_as_the_shank(self):
+        # #43: the same cutter with its neck as SFDM, as Harvey states its lollipops
+        e = keyseat({"SFDM": 0.25, "shoulder-diameter": 0.25})
+        reach = (0.093 + 0.75) * 25.4
+        self.assertEqual(self.findings(e, reach - 0.2, self.T_SLOT, 10), set())
+        self.assertEqual(self.findings(e, reach + 0.5, self.T_SLOT, 10), {"shank_hit"})
+
+        def before(d):  # what we wrote until #43
+            d.pop("body")
+            d.update(shank_len=1.30951 * 25.4 - d["flute_len"], holder_d=50.0, holder_len=40.0)
+        self.assertEqual(self.findings(e, 30, self.T_SLOT, 10, before), set())
+        self.assertEqual(self.findings(e, 30, self.T_SLOT, 10), {"shank_hit"})
 
     def test_saw_is_held_where_its_arbor_widens(self):
         # #31: 12 mm wide for 20 mm above the 1.6 mm blade, 40 mm wide above that

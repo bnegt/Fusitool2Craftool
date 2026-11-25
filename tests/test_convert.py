@@ -1108,6 +1108,112 @@ class LeftHandTests(unittest.TestCase):
         self.assertTrue(any("left-hand" in p for p in compare(d, entry, result.options)))
 
 
+def shafted(type_="flat end mill", geometry=None, segments=(), **extra):
+    """A 10 mm tool with 20 mm of flutes on a 10 mm shank, out to 60 mm (#43)."""
+    return tool(type_, geometry={"DC": 10, "LCF": 20, "LB": 60, "OAL": 80, "SFDM": 10, **(geometry or {})},
+                shaft={"type": "shaft", "segments": [
+                    {"height": h, "lower-diameter": lo, "upper-diameter": up} for h, lo, up in segments]}, **extra)
+
+
+class WideShankTests(unittest.TestCase):
+    """#43: Fusion's shoulder or shaft is wider than the one shank cylinder."""
+
+    def verifies(self, result):
+        with tempfile.TemporaryDirectory() as tmp:
+            return verify_file(camtools.write(result, Path(tmp) / "out.camtools"), result)
+
+    def converted(self, entry, *options):
+        d, result = one(entry, *options)
+        self.assertEqual(self.verifies(result), [])
+        return d, [[round(v, 4) for v in q[:2]] for q in (d.get("body") or {}).get("spun", [])]
+
+    def test_plain_shank_is_unchanged(self):
+        for e in (shafted(), shafted(segments=[(5, 8, 10)]), shafted(geometry={"shoulder-length": 30, "shoulder-diameter": 9}),
+                  shafted(segments=[(5, 10.001, 10.001)])):
+            d, outline = self.converted(e)
+            self.assertEqual((d["shank_d"], d["shank_len"], outline), (10, 40, []))
+
+    def test_shaft_that_widens_is_drawn(self):
+        d, outline = self.converted(shafted(segments=[(10, 10, 10), (5, 10, 16)]))
+        self.assertEqual((d["shank_d"], d["shank_len"]), (10, 10))
+        # the cone to 16 mm, 16 mm up to LB (Fusion's SFDM is the neck), the default holder
+        self.assertEqual(outline, [[30, 0], [30, 5], [35, 8], [60, 8], [60, 25], [100, 25], [100, 0]])
+        self.assertEqual((d["holder_d"], d["holder_len"]), (50, 70))
+
+    def test_collar_is_the_shank_and_the_stem_is_drawn(self):
+        # a 50 mm face mill body on a 10 mm shank
+        e = shafted("face mill", {"DC": 50, "shoulder-length": 23, "shoulder-diameter": 50}, [(4, 26, 22)])
+        d, outline = self.converted(e)
+        self.assertEqual((d["shank_d"], d["shank_len"]), (50, 3))
+        self.assertEqual(outline[:4], [[23, 0], [23, 13], [27, 11], [60, 11]])
+
+    def test_wide_body_all_the_way(self):
+        # Sandvik's exchangeable heads: 12 mm shoulder, SFDM 11.7
+        d, outline = self.converted(shafted(geometry={"SFDM": 9.7, "shoulder-length": 60, "shoulder-diameter": 10}))
+        self.assertEqual((d["shank_d"], d["shank_len"], outline), (10, 40, []))
+
+    def test_cone_right_above_the_flutes(self):
+        d, outline = self.converted(shafted("counter sink", {"SIG": 90, "SFDM": 5}, [(10, 12, 12)]))
+        self.assertEqual((d["shank_d"], d["shank_len"]), (12, 40))
+        d, outline = self.converted(shafted(geometry={"SFDM": 5}, segments=[(10, 12, 5)]))
+        self.assertEqual((d["shank_d"], d["shank_len"]), (12, 0.001))
+        self.assertAlmostEqual(outline[1][1], 6, places=3)
+
+    def test_shaft_past_the_stick_out_is_in_the_holder(self):
+        d, outline = self.converted(shafted(segments=[(30, 10, 10), (40, 10, 18)]))
+        self.assertEqual((d["shank_d"], d["shank_len"]), (10, 30))
+        self.assertEqual(outline[1:3], [[50, 5], [60, 6]])
+        self.assertEqual(self.converted(shafted(segments=[(50, 10, 10), (5, 20, 20)]))[0]["shank_len"], 40)
+
+    def test_shoulder_without_a_diameter(self):
+        # the first segment starts as wide as the shoulder ends (Iscar SCD 124)
+        d, outline = self.converted(shafted(geometry={"shoulder-length": 30}, segments=[(5, 14, 10)]))
+        self.assertEqual((d["shank_d"], d["shank_len"]), (14, 10))
+        self.assertEqual(outline[1:4], [[30, 7], [35, 5], [60, 5]])
+
+    def test_drawn_under_fusions_holder(self):
+        h = {"unit": "millimeters", "segments": [{"height": 20, "lower-diameter": 30, "upper-diameter": 40}]}
+        d, outline = self.converted(shafted(segments=[(10, 10, 10), (5, 10, 16)], holder=h))
+        self.assertEqual((d["holder_d"], d["holder_len"]), (40, 50))
+        self.assertEqual(outline[-4:-1], [[60, 8], [60, 15], [80, 20]])
+
+    def test_cylinders(self):
+        d, _ = self.converted(shafted(segments=[(10, 10, 10), (5, 10, 16)]), Options(holder_bodies=False))
+        self.assertEqual((d["shank_len"], d["holder_d"], d["holder_len"]), (10, 50, 70))
+
+    def test_lollipop_that_states_its_neck_as_the_shank(self):
+        # Harvey 22704
+        e = tool("lollipop mill", unit="inches", geometry={
+            "DC": 0.0625, "LCF": 0.042, "LB": 0.2341, "OAL": 1.5, "SFDM": 0.047, "shoulder-diameter": 0.047,
+            "shoulder-length": 0.042}, shaft={"segments": [
+                {"height": 0.062, "lower-diameter": 0.047, "upper-diameter": 0.047},
+                {"height": 0.06755, "lower-diameter": 0.047, "upper-diameter": 0.125}]})
+        d, outline = self.converted(e)
+        self.assertAlmostEqual(d["shank_d"], 0.047 * 25.4)
+        self.assertAlmostEqual(d["flute_len"] + d["shank_len"], 0.104 * 25.4, places=5)
+        self.assertEqual(outline[2], [round(0.17155 * 25.4, 4), 1.5875])
+        self.assertEqual(outline[3][1], 1.5875)
+
+    def test_undercut_shoulder_without_a_diameter_is_the_neck(self):
+        # Matsuura T428
+        e = tool("lollipop mill", unit="inches", geometry={
+            "DC": 0.1875, "LCF": 0.125, "LB": 1.5, "OAL": 5, "SFDM": 0.125, "shoulder-length": 1},
+            shaft={"segments": [{"height": 1, "lower-diameter": 0.1875, "upper-diameter": 0.1875}]})
+        d, outline = self.converted(e)
+        self.assertAlmostEqual(d["shank_d"], 3.175)
+        self.assertEqual(outline[1][0], 25.4)
+        self.assertAlmostEqual(outline[1][1], 0.1875 * 12.7, places=3)
+
+    def test_output_check_compares_the_body(self):
+        for change in ({"shank_d": 8.0}, {"shank_len": 40.0}, {"body": None, "holder_d": 12.0}):
+            d, result = one(shafted(segments=[(10, 10, 10), (5, 10, 16)]))
+            d.update(change)
+            self.assertTrue(self.verifies(result), change)
+        d, result = one(shafted(segments=[(10, 10, 10), (5, 10, 16)]))
+        d["body"]["spun"][2][1] = 6.0
+        self.assertTrue(any("the body is" in p or "thinner" in p for p in self.verifies(result)))
+
+
 class UndercutShankTests(unittest.TestCase):
     """#27: undercut cutters whose shank is as wide as the head."""
 
@@ -1187,7 +1293,7 @@ class UndercutShankTests(unittest.TestCase):
 
     def test_narrow_shank_is_unchanged(self):
         # a shank narrower than the head stays the neck over the whole body
-        d, _ = one(keyseat({"SFDM": 0.375, "shoulder-diameter": 0.375}))
+        d, _ = one(keyseat({"SFDM": 0.375, "shoulder-diameter": 0.375}, segments=((0.75, 0.25, 0.25), (0.21651, 0.25, 0.375))))
         self.assertAlmostEqual(d["shank_d"], 0.375 * 25.4)
         self.assertAlmostEqual(d["shank_len"], (1.30951 - 0.093) * 25.4, places=5)
         self.assertNotIn("body", d)
