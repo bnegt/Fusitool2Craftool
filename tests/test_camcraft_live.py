@@ -26,7 +26,7 @@ from fusitool2craftool.convert import Options, convert
 from fusitool2craftool.fusion import load_library
 from fusitool2craftool.push import PROTOCOL_VERSION, _close, _content_text, _Session, push
 
-from .test_convert import DEFAULT_SPEEDS, FIXTURES, PRIVATE, corner_chamfer, single_form, tool
+from .test_convert import DEFAULT_SPEEDS, FIXTURES, PRIVATE, corner_chamfer, holder, single_form, tool
 
 CLI = os.environ.get("CAMCRAFT_CLI") or shutil.which("camcraft-cli")
 
@@ -119,6 +119,12 @@ class CamCraftLiveTests(unittest.TestCase):
                           kind_defaults={"drill": {"vc": 60, "feed": 150}, "t_slot": {"vc": 60, "fz": 0.005}})
         self.assertEqual(convert(entries, options).skipped, [])
         self.assert_imports(entries, options)
+
+    def test_default_holder(self):
+        # #14: one stand-alone holder drawn on every tool without one
+        options = Options(default_holder=holder())
+        self.assertTrue(all("body" in t["definition"] for t in convert(edge_cases(), options).tools))
+        self.assert_imports(edge_cases(), options)
 
     def test_duplicate_fusion_numbers_are_fine(self):
         # .camtools numbers are not imported (CamCraft numbers the tools

@@ -11,7 +11,7 @@ from unittest import mock
 
 from fusitool2craftool import camtools
 from fusitool2craftool.cli import main
-from fusitool2craftool.convert import RELEASED_MATERIALS, Options, convert, preset_material, why_not_sane
+from fusitool2craftool.convert import RELEASED_MATERIALS, Options, convert, find_holder, preset_material, why_not_sane
 from fusitool2craftool.verify import verify_file
 from fusitool2craftool.fusion import FusionLibraryError, load_library, parse_library
 
@@ -146,6 +146,130 @@ class SingleFormThreadMillTests(unittest.TestCase):
         d, _ = one(e, options)
         self.assertEqual((d["rpm"], d["feed"]), (5000, 100))
         self.assertEqual(verify([e], options), [])
+
+
+def holder(description="ER16", unit="millimeters", segments=((20, 20, 30), (10, 40, 40)), **extra):
+    """A stand-alone Fusion holder: (height, lower, upper diameter) from the tool end up."""
+    return {"type": "holder", "unit": unit, "description": description, "segments": [
+        {"height": h, "lower-diameter": lo, "upper-diameter": up} for h, lo, up in segments], **extra}
+
+
+class DefaultHolderTests(unittest.TestCase):
+    """#14: a stand-alone Fusion holder for tools that have none."""
+
+    def test_seated_at_each_tools_own_stickout(self):
+        options = Options(default_holder=holder())
+        for lb in (30, 45):
+            e = tool(geometry={"LB": lb})
+            d, result = one(e, options)
+            self.assertEqual((d["holder_d"], d["holder_len"]), (40, 30))
+            self.assertEqual(d["body"]["spun"], [[lb, 0, 0], [lb, 10, 0], [lb + 20, 15, 0], [lb + 20, 20, 0],
+                                                 [lb + 30, 20, 0], [lb + 30, 0, 0]])
+            self.assertTrue(any("default holder 'ER16' used" in w for w in result.warnings))
+            self.assertEqual(verify([e], options), [])
+
+    def test_holder_units_are_its_own(self):
+        options = Options(default_holder=holder(unit="inches", segments=((1, 1, 2),)))
+        d, _ = one(tool(), options)
+        self.assertEqual((d["holder_d"], d["holder_len"]), (50.8, 25.4))
+        self.assertEqual(verify([tool()], options), [])
+        metric = Options(default_holder=holder())
+        inch = tool(unit="inches", geometry={"DC": 0.25, "LCF": 0.5, "LB": 1, "SFDM": 0.25})
+        self.assertEqual(one(inch, metric)[0]["holder_d"], 40)
+        self.assertEqual(verify([inch], metric), [])
+
+    def test_a_tools_own_holder_stays(self):
+        e = tool(holder={"unit": "millimeters", "segments": [
+            {"height": 25, "lower-diameter": 22, "upper-diameter": 22}]})
+        options = Options(default_holder=holder())
+        d, result = one(e, options)
+        self.assertEqual((d["holder_d"], d["holder_len"]), (22, 25))
+        self.assertFalse(any("default holder" in w for w in result.warnings))
+        self.assertEqual(verify([e], options), [])
+
+    def test_empty_holder_counts_as_none(self):
+        for own in ({"segments": []}, {"segments": [{"height": 0, "lower-diameter": 0, "upper-diameter": 0}]}):
+            e = tool(holder=own)
+            options = Options(default_holder=holder())
+            self.assertEqual(one(e, options)[0]["holder_d"], 40)
+            self.assertEqual(verify([e], options), [])
+
+    def test_cylinders_and_single_form(self):
+        options = Options(default_holder=holder(), holder_bodies=False)
+        d, _ = one(tool(), options)
+        self.assertNotIn("body", d)
+        self.assertEqual((d["holder_d"], d["holder_len"]), (40, 30))
+        self.assertEqual(verify([tool()], options), [])
+        # above a single-form thread mill's neck: shank first, then the holder
+        options = Options(default_holder=holder())
+        d, _ = one(single_form(), options)
+        self.assertEqual(d["body"]["spun"][1:4], [[16, 2, 0], [52, 2, 0], [52, 10, 0]])
+        self.assertEqual((d["holder_d"], d["holder_len"]), (40, 66))
+        self.assertEqual(verify([single_form()], options), [])
+
+    def test_output_check_catches_damage(self):
+        options = Options(default_holder=holder())
+        self.assertTrue(verify([tool()], options, change=lambda d: d.update(holder_d=50.0)))
+
+        def thin(d):
+            d["body"]["spun"][1][1] = 5.0
+        self.assertTrue(any("thinner" in p for p in verify([tool()], options, change=thin)))
+
+    def test_find_holder(self):
+        er16, er20 = holder(), holder("ER20", **{"product-id": "X-20"})
+        entries = [tool(description="ER16"), er16, er20]
+        self.assertIs(find_holder(" er16 ", entries), er16)
+        self.assertIs(find_holder("x-20", entries), er20)
+        self.assertIs(find_holder("ER16", [er16, holder()]), er16)  # the same shape twice is fine
+        for name, among, why in (("ER99", entries, "'ER16', 'ER20'"), ("", entries, "no stand-alone holder"),
+                                 ("ER16", [tool()], "no holders there"),
+                                 ("ER16", [er16, holder(segments=((5, 9, 9),))], "different shapes"),
+                                 ("ER16", [holder(segments=((20, 0, 30),))], "cannot be drawn")):
+            with self.subTest(name=name, why=why), self.assertRaisesRegex(ValueError, why):
+                find_holder(name, among)
+
+    def test_holder_without_unit_is_mm_on_inch_tools_too(self):
+        options = Options(default_holder=find_holder("ER16", [holder(unit=None)]))
+        e = tool(unit="inches", geometry={"DC": 0.25, "LCF": 0.5, "LB": 1, "SFDM": 0.25})
+        self.assertEqual(one(e, options)[0]["holder_d"], 40)
+        self.assertEqual(verify([e], options), [])
+
+    def run_cli(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = main([str(a) for a in argv])
+        return code, out.getvalue() + err.getvalue()
+
+    def test_command_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            (tmp / "in").mkdir()
+            (tmp / "in" / "tools.json").write_text(json.dumps({"data": [tool()]}))
+            (tmp / "in" / "holders.json").write_text(json.dumps({"data": [holder()]}))
+            (tmp / "in" / "broken.json").write_text("{")
+            src = tmp / "in" / "tools.json"
+
+            def written(path):
+                return json.loads(path.read_text())["tools"][0]["definition"]["holder_d"]
+
+            code, text = self.run_cli(src, "-o", tmp / "a.camtools", "--default-holder", "ER16",
+                                      "--holders", tmp / "in" / "holders.json")
+            self.assertEqual((code, written(tmp / "a.camtools")), (0, 40), text)
+            # a folder finds its own holders, whichever library they are in
+            (tmp / "in" / "broken.json").unlink()
+            code, text = self.run_cli(tmp / "in", "-o", tmp / "out", "--default-holder", "ER16")
+            self.assertEqual((code, written(tmp / "out" / "tools.camtools")), (0, 40), text)
+            (tmp / "in" / "broken.json").write_text("{")
+            code, _ = self.run_cli(src, "-o", tmp / "b.camtools", "--default-holder", "ER16", "--holders", tmp / "in")
+            self.assertEqual(code, 0)
+            for argv, why in ((("--default-holder", "ER16"), "no stand-alone holder"),
+                              (("--default-holder", ""), "no stand-alone holder"),
+                              (("--holders", tmp / "in"), "needs --default-holder"),
+                              (("--default-holder", "ER16", "--holders", tmp / "gone.json"), "cannot read")):
+                code, text = self.run_cli(src, "-o", tmp / "c.camtools", *argv)
+                self.assertEqual(code, 1)
+                self.assertIn(why, text)
+                self.assertFalse((tmp / "c.camtools").exists())
 
 
 class CornerChamferTests(unittest.TestCase):

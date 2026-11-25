@@ -321,6 +321,9 @@ def _holder_problems(d: dict, entry: dict, options=None) -> list[str]:
     """
     out: list[str] = []
     segs = _holder_segments(entry)
+    if options is not None and options.default_holder and not (
+            segs and max(max(lo, up) for _, lo, up in segs) > 0 and sum(h for h, _, _ in segs) > 0):
+        segs = _holder_segments({"holder": options.default_holder})  # --default-holder (#14)
     segs = _with_shank(segs, entry, options)
     if segs and max(max(lo, up) for _, lo, up in segs) > 0 and sum(h for h, _, _ in segs) > 0:
         for field, want in (("holder_d", 2 * max(max(lo, up) for _, lo, up in segs)),
