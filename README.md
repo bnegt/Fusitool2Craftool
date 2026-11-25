@@ -385,8 +385,13 @@ row is listed with the reason (`unmatched`, `duplicate <material>`,
 
 ### Default speeds
 
-Vendor catalogs often have no presets. Without help those tools are
-skipped; with defaults they get speeds, by kind and by size:
+Vendor catalogs often have no presets, or only a placeholder. Without help
+those tools are skipped; with defaults they get speeds, by kind and by size.
+A placeholder is a preset of 1 rpm whose feeds are all 1, 0 or missing (Harvey,
+Helical, SwiftCARB, Valor and MA Ford ship every tool with one). It states no
+speeds, so another preset is used if there is one
+([#35](https://github.com/bnegt/Fusitool2Craftool/issues/35)). 1 rpm with a
+real feed is kept: that is a drag engraver.
 
 | Option | Gives |
 |---|---|
@@ -459,7 +464,7 @@ the tools but **no operation cuts with a flat or ball tip yet**.
 | waterjet, laser and plasma cutter; laser powder, laser wire and electric arc wire | cutting and additive heads, not cutters |
 | `shaft`, `tool block` | parts of a holder, not cutters |
 | milling or drilling tools without a flute length (`LCF`) | nothing else Fusion states gives the cutting length: CamCraft would think the tool cuts along `shoulder-length`, `LB` or `OAL`, and could bury the shank or neck. Give the tool a flute length in Fusion. Single-form thread mills are the exception: their tooth height follows from the pitch |
-| tools without rpm/feed | skipped unless a [default](#default-speeds) is given |
+| tools without rpm/feed, or with only a placeholder | skipped unless a [default](#default-speeds) is given |
 
 A ball end mill whose radius is within 10 % of D/2 is still a ball nose
 (vendors round imperial radii, e.g. 1/8" listed as R1.5). A tool CamCraft
@@ -509,7 +514,7 @@ CAMCRAFT_CLI=~/camcraft-0.26.0-linux-x86_64/camcraft-cli \
 ```
 
 Last run (CamCraft 0.26.0, 2026-11-25): 65 libraries, 134,623 tools written
-with default speeds (75,057 without), all imported, none renamed or skipped,
+with default speeds (23,951 without), all imported, none renamed or skipped,
 with and without `--all-presets` (37,276 material rows). 40 of the libraries
 and 126,936 of the tools are Autodesk's vendor libraries; with them the whole
 suite takes about 2.5 minutes (1 minute without CamCraft).

@@ -62,16 +62,16 @@ python3 tests/get_autodesk_libraries.py --update       # again, after a vendor's
 ```
 
 The site had no file for 7 of them (it answers "Failed to download file").
-Counts on 2026-11-25; "Convert" is without defaults (a catalog without speeds
-gives none), "With defaults" uses the tests' default speeds:
+Counts on 2026-11-25; "Convert" is without defaults (a catalog without speeds,
+or with only placeholder speeds, gives none), "With defaults" uses the tests' default speeds:
 
 | Library (catalogue name) | Entries | Convert | With defaults | Mostly |
 |---|---|---|---|---|
-| Harvey Tool/End Mills | 11,937 | 11,449 | 11,449 | flat end mill, ball end mill, bull nose end mill |
-| Harvey Tool/Holemaking and Threading | 3,959 | 2,194 | 2,194 | drill, form mill, spot drill |
-| Harvey Tool/Specialty Profiles | 7,866 | 5,484 | 5,484 | slot mill, chamfer mill, form mill |
-| Helical Solutions/End Mills | 6,007 | 6,007 | 6,007 | bull nose end mill, flat end mill, ball end mill |
-| Helical Solutions/Specialty Profiles | 190 | 190 | 190 | chamfer mill, spot drill |
+| Harvey Tool/End Mills | 11,937 | 0 | 11,449 | flat end mill, ball end mill, bull nose end mill |
+| Harvey Tool/Holemaking and Threading | 3,959 | 0 | 2,194 | drill, form mill, spot drill |
+| Harvey Tool/Specialty Profiles | 7,866 | 0 | 5,484 | slot mill, chamfer mill, form mill |
+| Helical Solutions/End Mills | 6,007 | 0 | 6,007 | bull nose end mill, flat end mill, ball end mill |
+| Helical Solutions/Specialty Profiles | 190 | 0 | 190 | chamfer mill, spot drill |
 | BitsBits/BitsBits Cutting Tools | 62 | 50 | 50 | flat end mill, tapered mill, ball end mill |
 | IMCO/Solid End Mills Metric | 1,635 | 1,631 | 1,635 | bull nose end mill, flat end mill, ball end mill |
 | IMCO/Solid End Mills Imperial | 3,243 | 3,243 | 3,243 | bull nose end mill, flat end mill, ball end mill |
@@ -80,7 +80,7 @@ gives none), "With defaults" uses the tests' default speeds:
 | Haas Tooling/Haas Tooling | 3,013 | 158 | 2,972 | drill, bull nose end mill, tap right hand |
 | Haas Tooling/Haas Holders | 404 | 0 | 0 | holder |
 | Haimer/Haimer Holders | 557 | 0 | 0 | holder |
-| SwiftCARB/End Mills | 23,574 | 23,571 | 23,571 | bull nose end mill, flat end mill, ball end mill |
+| SwiftCARB/End Mills | 23,574 | 0 | 23,571 | bull nose end mill, flat end mill, ball end mill |
 | DATRON/DATRON Cutting Tools | 1,003 | 938 | 938 | flat end mill, drill, chamfer mill |
 | Delta Tools/HPC Endmill Solid Carbide | 154 | 154 | 154 | flat end mill, bull nose end mill |
 | Destiny Tool/Destiny Tool | 1,791 | 0 | 1,791 | flat end mill, bull nose end mill, ball end mill |
@@ -94,7 +94,7 @@ gives none), "With defaults" uses the tests' default speeds:
 | Guhring/Solid Hole Making | 20,121 | 0 | 20,121 | drill, center drill, spot drill |
 | NexGen Tooling/NexGen Tooling | 3,981 | 0 | 3,981 | bull nose end mill, flat end mill, ball end mill |
 | Garr Tool/Garr Tool | 11,092 | 0 | 10,497 | drill, bull nose end mill, flat end mill |
-| Valor Holemaking/Valor Holemaking | 2,251 | 2,001 | 2,001 | drill, form mill, chamfer mill |
+| Valor Holemaking/Valor Holemaking | 2,251 | 0 | 2,001 | drill, form mill, chamfer mill |
 | OSG/End Mills | 259 | 259 | 259 | flat end mill |
 | Dormer Pramet/Dormer Pramet | - | - | - | not available |
 | Kennametal/Kennametal | - | - | - | not available |
@@ -108,8 +108,8 @@ gives none), "With defaults" uses the tests' default speeds:
 | Schunk/Schunk Holders | 642 | 0 | 0 | holder |
 | Kennametal/Turning Imperial/Turning Imperial | 57 | 55 | 55 | turning general, turning boring, turning grooving |
 | Kennametal/Turning Metric/Turning Metric | - | - | - | not available |
-| MA Ford/MA Ford End Mills | 20 | 20 | 20 | bull nose end mill |
-| MA Ford Europe/End Mills | 189 | 189 | 189 | bull nose end mill, flat end mill |
+| MA Ford/MA Ford End Mills | 20 | 0 | 20 | bull nose end mill |
+| MA Ford Europe/End Mills | 189 | 0 | 189 | bull nose end mill, flat end mill |
 | Sandvik Coromant/Turning Imperial/Turning Imperial | 54 | 54 | 54 | turning general, turning boring, turning threading |
 | Sandvik Coromant/Turning Metric/Turning Metric | 243 | 240 | 240 | turning general, turning boring, turning grooving |
 | Iscar/Turning Imperial/Turning Imperial | 71 | 71 | 71 | turning general, turning boring, turning grooving |
@@ -119,7 +119,7 @@ gives none), "With defaults" uses the tests' default speeds:
 | Ingersoll/Turning Metric/Turning Metric | - | - | - | not available |
 | Widia/Turning Imperial/Turning Imperial | - | - | - | not available |
 | Widia/Turning Metric/Turning Metric | - | - | - | not available |
-| **Total** | **134,498** | **67,439** | **126,936** | |
+| **Total** | **134,498** | **16,334** | **126,936** | |
 
 The tools skipped even with defaults, by reason: form mill 3,023; tapered mill
 925; reamer 876; counterbore 434; dovetail with a corner radius 372; radius
