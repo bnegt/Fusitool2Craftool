@@ -210,6 +210,28 @@ class Conversion:
     material word, "unmatched", "duplicate <material>" or "no speeds"."""
 
 
+# Fusion types without a CamCraft kind, as the report names them. With KINDS
+# and unsupported_category() this covers all 40 types of Autodesk's schema (#19).
+FAMILIES = {
+    "reamer": "reamer",  # NeoTech/Camcraft#897
+    "counter bore": "counterbore",  # NeoTech/Camcraft#897
+    "form mill": "form mill",  # CamCraft's Form kind is a lathe form gauge
+    "circle segment barrel": "circle segment mill",
+    "circle segment lens": "circle segment mill",
+    "circle segment oval": "circle segment mill",
+    "circle segment taper": "circle segment mill",
+    "probe": "probe",
+    "shaft": "holder part",
+    "tool block": "holder part",
+    "waterjet": "sheet cutting head",
+    "laser cutter": "sheet cutting head",
+    "plasma cutter": "sheet cutting head",
+    "laser powder": "additive head",
+    "laser wire": "additive head",
+    "electric arc wire": "additive head",
+}
+
+
 def unsupported_category(entry: dict) -> str | None:
     """Name the known cutter families CamCraft cannot represent."""
     ftype = str(entry.get("type", "")).strip().lower()
@@ -225,9 +247,7 @@ def unsupported_category(entry: dict) -> str | None:
     if ftype.startswith("turning "):
         from . import lathe
         return lathe.category(entry)
-    # No CamCraft kind yet: reamer / counterbore NeoTech/Camcraft#897; a
-    # custom-profile mill (CamCraft's Form kind is a lathe form gauge).
-    return {"reamer": "reamer", "counter bore": "counterbore", "form mill": "form mill"}.get(ftype)
+    return FAMILIES.get(ftype)
 
 
 class ToolRefused(ValueError):
