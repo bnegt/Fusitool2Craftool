@@ -64,6 +64,8 @@ def compare(d: dict, entry: dict, options=None) -> list[str]:
     unit = INCH if str(entry.get("unit", "")).lower() in ("inches", "inch", "in") else 1.0
     g = entry.get("geometry") or {}
     ftype = str(entry.get("type", "")).lower()
+    if ftype.startswith("turning "):
+        return _compare_lathe(d, entry, options)
 
     def check(field: str, expected, fusion_key: str) -> None:
         if expected is None:
@@ -164,6 +166,107 @@ def compare(d: dict, entry: dict, options=None) -> list[str]:
             out.append(f"cutting data for {r['material']}: rpm {r.get('rpm')} / feed {r.get('feed')} "
                        f"match no Fusion preset")
     return out
+
+
+def _compare_lathe(d: dict, entry: dict, options=None) -> list[str]:
+    """A lathe tool (#2) against its Fusion entry, recomputed from Fusion's fields."""
+    out: list[str] = []
+    inch = str(entry.get("unit", "")).lower() in ("inches", "inch", "in")
+    unit = INCH if inch else 1.0
+    g, h, s = entry.get("geometry") or {}, entry.get("holder") or {}, entry.get("setup") or {}
+    ftype = str(entry.get("type", "")).lower()
+
+    def f(src, key):
+        return float(src[key]) * unit if _is_num(src.get(key)) and src[key] > 0 else 0.0
+
+    def check(field, expected, why):
+        if not _close(d.get(field), expected):
+            out.append(f"{field} is {d.get(field)}, Fusion {why} gives {round(expected, 6)}")
+
+    kind = {"turning general": "turning", "turning boring": "bore",
+            "turning grooving": "groove", "turning threading": "thread"}.get(ftype)
+    if d.get("kind") != kind:
+        out.append(f"kind is {d.get('kind')!r}, Fusion type '{ftype}' gives {kind!r}")
+    shank = max(f(h, "W"), f(h, "H"))
+    head, oal = f(h, "LH"), f(h, "OAL")
+    if kind == "bore":
+        tip = f(h, "CW")  # from the bar's axis
+        check("diameter", tip + shank / 2 if tip >= shank / 2 else 2 * tip, "CW + W/2")
+        check("shank_d", max(tip + shank / 2, shank), "CW + W/2")
+        # whatever the numbers: CamCraft's bar must cover the real one
+        a, b = d.get("diameter") or 0, d.get("shank_d") or 0
+        if max(b, (a + b) / 2) < tip + shank / 2 - TOL or max(0, (b - a) / 2) < shank / 2 - tip - TOL:
+            out.append("the boring bar's body is smaller than Fusion's bar")
+    else:
+        check("diameter", shank, "max(W, H)")
+        check("shank_d", shank, "max(W, H)")
+    check("flute_len", head, "LH")
+    check("shank_len", max(oal - head, 0.0) if kind == "bore" else 0.0, "OAL - LH (a bar) or the head alone")
+    if d.get("holder_d") != 0 or d.get("holder_len") != 0 or "body" in d:
+        out.append("a lathe tool must have no spindle holder")
+
+    nose = f(g, "INSD") / 2 if str(g.get("SC", "")).upper() == "R" else f(g, "RE")
+    check("nose_radius", nose if kind in ("turning", "bore") else 0.0, "RE (round insert: INSD/2)")
+    width = {"groove": f(g, "tool_grooveWidth"), "thread": 0.866 * f(g, "TP")}.get(kind, 0.0)
+    check("width", width, "tool_grooveWidth / 0.866 x TP")
+    check("tip_angle", float(g.get("thread-profile-angle") or 0) if kind == "thread" else 0.0, "thread-profile-angle")
+
+    usual = s.get("HAND") is True and str(s.get("compensation", "")).lower() == "tip tangent"
+    key = (kind, s.get("angle"), str(h.get("HAND", "")).upper())
+    code = {("turning", 0, "R"): 2, ("turning", 0, "L"): 1, ("bore", 90, "R"): 3}.get(key) if usual else None
+    if d.get("orientation") != code:
+        out.append(f"orientation is {d.get('orientation')}, Fusion's hand and setup give {code}")
+
+    number = (entry.get("post-process") or {}).get("number")
+    if _is_num(number) and number > 0 and d.get("number") != int(number):
+        out.append(f"number is {d.get('number')}, Fusion tool number is {int(number)}")
+    if d.get("cutting_data"):
+        out.append("a lathe tool must have no material rows")
+    if options is not None and not any(
+            _lathe_speeds_match(d, p, kind, unit, f(g, "TP"), options) for p in presets_of(entry) or [{}]):
+        out.append(f"rpm {d.get('rpm')} / feed {d.get('feed')} / turning {d.get('turning')} "
+                   f"match no Fusion preset or default")
+    return out
+
+
+def _lathe_speeds_match(d: dict, p: dict, kind: str, unit: float, pitch: float, options) -> bool:
+    def num(key):
+        return float(p[key]) if _is_num(p.get(key)) and p[key] > 0 else 0.0
+
+    n, vc = num("n"), num("v_c") * (0.3048 if unit == INCH else 1.0)
+    fn, vf = num("f_n") * unit, num("v_f") * unit
+    flag = p.get("use-constant-surface-speed")
+    css = vc > 0 and (flag is True or (flag is None and not n))
+    on_work = vc * 1000 / (math.pi * options.turning_d)
+    if options.max_rpm:
+        on_work = min(on_work, options.max_rpm)
+    on_work = max(round(on_work), 1)
+    if n and (not css or kind == "thread"):
+        rpm = n
+    elif vc:
+        rpm = on_work
+    else:
+        rpm = _expected_default(options, kind, "rpm", options.turning_d, None, 0)
+    if not _close(d.get("rpm"), rpm):
+        return False
+    turning = None
+    if kind == "thread":
+        feed = rpm * pitch
+    elif fn and (p.get("use-feed-per-revolution") is not False or not vf):
+        feed = fn * rpm
+        if css:
+            turning = {"vc": vc, "feed_per_rev": fn}
+            if options.max_rpm:
+                turning["max_rpm"] = options.max_rpm
+    else:
+        feed = vf or _expected_default(options, kind, "feed", options.turning_d, None, rpm)
+    got = d.get("turning")
+    if (got is None) != (turning is None):
+        return False
+    if turning and (set(got) != set(turning) or not all(
+            _is_num(got[k]) and math.isclose(got[k], turning[k], rel_tol=1e-4, abs_tol=1e-6) for k in turning)):
+        return False
+    return _close(d.get("feed"), feed)
 
 
 def _single_neck(g: dict, f, body) -> tuple[float, float] | None:

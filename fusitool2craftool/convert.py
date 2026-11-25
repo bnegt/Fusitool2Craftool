@@ -122,6 +122,11 @@ KINDS = {
     "slot mill": "t_slot",
     "lollipop mill": "lollipop",
     "dovetail mill": "dovetail",
+    # Lathe tools (lathe.py, #2)
+    "turning general": "turning",
+    "turning boring": "bore",
+    "turning grooving": "groove",
+    "turning threading": "thread",
 }
 
 UNDERCUT = ("t_slot", "keyseat", "lollipop", "dovetail")
@@ -160,6 +165,8 @@ class Options:
     """Cutting speed, m/min: rpm = v_c x 1000 / (pi x D) when Fusion has none."""
     default_fz: float | None = None
     """Chip load, mm per tooth: feed = rpm x flutes x f_z when Fusion has none."""
+    turning_d: float = 50.0
+    """Work diameter (mm) a lathe tool's rpm is computed for from its surface speed."""
     max_rpm: float | None = None
     """Cap for an rpm computed from --default-vc (the spindle's maximum)."""
     kind_defaults: dict = field(default_factory=dict)
@@ -215,6 +222,9 @@ def unsupported_category(entry: dict) -> str | None:
         return "roundover bit"
     if ftype == "radius mill":
         return "roundover bit"
+    if ftype.startswith("turning "):
+        from . import lathe
+        return lathe.category(entry)
     # No CamCraft kind yet: reamer / counterbore NeoTech/Camcraft#897; a
     # custom-profile mill (CamCraft's Form kind is a lathe form gauge).
     return {"reamer": "reamer", "counter bore": "counterbore", "form mill": "form mill"}.get(ftype)
@@ -270,6 +280,9 @@ def convert_tool(entry: dict, options: Options, presets_report: Counter | None =
     kind = KINDS.get(ftype)
     if kind is None:
         raise ToolRefused(f"Fusion tool type '{ftype or '?'}' has no CamCraft counterpart yet")
+
+    if ftype.startswith("turning "):
+        return _convert_lathe(entry, options, warnings, presets_report, defaults_report)
 
     unit = _unit_scale(entry.get("unit"))
     g = entry.get("geometry") or {}
@@ -420,27 +433,12 @@ def convert_tool(entry: dict, options: Options, presets_report: Counter | None =
     d["rpm"] = rpm
     d["feed"] = feed
 
-    material = {"hss": "hss", "carbide": "carbide"}.get(str(entry.get("BMC", "")).strip().lower())
-    if material:
-        d["tool_material"] = material
     nof = _num(g.get("NOF"))
     if nof is not None and float(nof).is_integer() and 1 <= nof <= 32:
         d["flutes"] = int(nof)
     if ftype == "face mill":
         d["center_cutting"] = False
-
-    number = _num((entry.get("post-process") or {}).get("number"))
-    if number is not None and float(number).is_integer() and number > 0:
-        d["number"] = int(number)
-
-    for key, src, limit in (
-        ("part_number", entry.get("product-id"), MAX_SHORT),
-        ("vendor", entry.get("vendor"), MAX_SHORT),
-        ("notes", entry.get("product-link"), MAX_NOTES),
-    ):
-        text = _clean_text(src, limit)
-        if text:
-            d[key] = text
+    _catalog(d, entry)
 
     row = _cutting_row(preset, options, rpm, feed, unit)
     rows = [row] if row else []
@@ -458,6 +456,43 @@ def convert_tool(entry: dict, options: Options, presets_report: Counter | None =
         body = holder_body(entry, d["flute_len"] + d["shank_len"], warnings, below, default_holder)
         if body:
             d["body"] = body
+    return d, warnings
+
+
+def _catalog(d: dict, entry: dict) -> None:
+    """Edge material, Fusion tool number, part number, vendor and link."""
+    material = {"hss": "hss", "carbide": "carbide"}.get(str(entry.get("BMC", "")).strip().lower())
+    if material:
+        d["tool_material"] = material
+    number = _num((entry.get("post-process") or {}).get("number"))
+    if number is not None and float(number).is_integer() and number > 0:
+        d["number"] = int(number)
+
+    for key, src, limit in (
+        ("part_number", entry.get("product-id"), MAX_SHORT),
+        ("vendor", entry.get("vendor"), MAX_SHORT),
+        ("notes", entry.get("product-link"), MAX_NOTES),
+    ):
+        text = _clean_text(src, limit)
+        if text:
+            d[key] = text
+
+
+def _convert_lathe(entry: dict, options: Options, warnings: list[str], presets_report: Counter | None,
+                   defaults_report: Counter | None) -> tuple[dict, list[str]]:
+    from . import lathe
+
+    d, preset = lathe.definition(entry, options, warnings, defaults_report if defaults_report is not None else Counter())
+    d["material_group"] = _material_group(preset, options)
+    _catalog(d, entry)
+    if options.all_presets and presets_report is not None:
+        # a material row holds an rpm, and a lathe preset has none
+        for p in presets_of(entry):
+            presets_report[(str(p.get("name", "")).strip() or "(unnamed)", "lathe tool")] += 1
+    _round_numbers(d)
+    why = why_not_sane(d)
+    if why:
+        raise ToolRefused(why)
     return d, warnings
 
 
@@ -503,6 +538,11 @@ def why_not_sane(d: dict) -> str | None:
             return "a thread mill's cutting length is shorter than one pitch"
         if kind == "thread_mill_single" and not 0 < d["pitch_min"] <= p:
             return f"a single-form thread mill's finest pitch {d['pitch_min']} mm must be over 0 and at most its {p} mm coarsest pitch"
+    if kind in ("turning", "bore", "groove", "thread"):
+        from . import lathe
+        why = lathe.why_not_sane(d)
+        if why:
+            return why
     if kind in UNDERCUT:
         why = _undercut_refusal(d)
         if why:
@@ -933,7 +973,7 @@ DEFAULT_KINDS = tuple(sorted(set(KINDS.values()) | {"bull_nose", "keyseat", "thr
 
 
 def _check_defaults(options: Options) -> None:
-    for name in ("default_rpm", "default_feed", "default_vc", "default_fz", "max_rpm"):
+    for name in ("default_rpm", "default_feed", "default_vc", "default_fz", "max_rpm", "turning_d"):
         v = getattr(options, name)
         if v is not None and not (math.isfinite(v) and v > 0):
             raise ValueError(f"--{name.replace('_', '-')} must be over 0, not {v:g}")
@@ -1082,6 +1122,8 @@ def _round_numbers(d: dict) -> None:
     for k, v in d.items():
         if isinstance(v, float):
             d[k] = round(v, 6)
+        elif k == "turning":
+            d[k] = {tk: round(tv, 6) for tk, tv in v.items()}
         elif k == "cutting_data":
             for row in v:
                 for rk, rv in row.items():

@@ -88,6 +88,8 @@ def build_parser() -> argparse.ArgumentParser:
                       help="cutting speed in m/min: rpm = v_c x 1000 / (pi x D)")
     dflt.add_argument("--default-fz", action="append", default=[], metavar="[KIND=]MM",
                       help="chip load in mm per tooth: feed = rpm x flutes x f_z (needs Fusion's flute count)")
+    dflt.add_argument("--turning-d", type=float, default=50.0, metavar="MM",
+                      help="work diameter a lathe tool's rpm is computed for from its surface speed (default 50)")
     dflt.add_argument("--max-rpm", type=float, metavar="RPM",
                       help="cap for an rpm computed from --default-vc (your spindle's maximum)")
     conv.add_argument("--holder-cylinders", action="store_true",
@@ -148,7 +150,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def parse_defaults(args) -> dict:
     """--default-rpm/feed/vc/fz values ("1000" or "drill=150") as Options fields."""
-    out: dict = {"kind_defaults": {}, "max_rpm": args.max_rpm}
+    out: dict = {"kind_defaults": {}, "max_rpm": args.max_rpm, "turning_d": args.turning_d}
     for field in ("rpm", "feed", "vc", "fz"):
         for text in getattr(args, f"default_{field}"):
             kind, _, value = text.rpartition("=")
