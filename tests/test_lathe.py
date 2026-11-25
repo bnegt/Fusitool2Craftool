@@ -79,7 +79,17 @@ class GeometryTests(unittest.TestCase):
         self.assertEqual((d["kind"], d["tip_angle"]), ("thread", 60))
         self.assertAlmostEqual(d["width"], 1.732)
         _, result = one(lathe("turning threading", {"maximum-thread-pitch": 3}))
-        self.assertTrue(any("partial profile" in w for w in result.warnings))
+        self.assertTrue(any("partial profile, 2 to 3 mm" in w for w in result.warnings))
+
+    def test_partial_profile_thread(self):
+        # Sandvik 266RFGZ2525-16: TP is the coarsest pitch of the range (#20)
+        d, result = one(lathe("turning threading", {"TP": 1.25, "TPN": 0.5, "TPX": 1.25}))
+        self.assertAlmostEqual(d["width"], 1.0825)
+        self.assertTrue(any("partial profile, 0.5 to 1.25 mm" in w and "written for 1.25 mm" in w
+                            for w in result.warnings))
+        for same in ({"TPN": 2, "TPX": 2}, {"minimum-thread-pitch": 2, "maximum-thread-pitch": 2}, {}):
+            _, result = one(lathe("turning threading", {"TP": 2, **same}))
+            self.assertFalse(any("partial profile" in w for w in result.warnings))
 
     def test_orientation(self):
         for type_, holder, setup, code in (

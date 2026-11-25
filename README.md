@@ -10,7 +10,7 @@ one go is included.
 
 Pure Python 3.10+, no dependencies. For **CamCraft 0.26.0 or newer**; older
 versions may refuse a library. Tested against CamCraft 0.26.0: all
-132,396 tools converted from 65 real libraries import without a change (see
+134,388 tools converted from 65 real libraries import without a change (see
 [Testing against CamCraft](#testing-against-camcraft)).
 
 ## How to run
@@ -174,8 +174,10 @@ skipped [roundover bit]: RBB-2F-D1/4-R1/4-F1b ...: corner radius 6.35 mm exceeds
 NOT IMPORTED: 2 roundover bits, 4 tapered ball mills - CamCraft has no tool type for them, so they are skipped
 ```
 
-Other tools that cannot be converted (see below) are listed in red the same
-way. Colour is used when writing to a terminal; set `NO_COLOR=1` to turn it
+Other tools that cannot be converted ([Not converted](#not-converted)) are
+listed in red the same way, with their family if it has a name: reamers,
+counterbores, form mills, circle segment mills, corner radius dovetail mills,
+probes, holder parts, cutting and additive heads, and some lathe tools. Colour is used when writing to a terminal; set `NO_COLOR=1` to turn it
 off or `FORCE_COLOR=1` to force it.
 
 ### Import into a running CamCraft
@@ -231,7 +233,7 @@ This runs `camcraft-cli mcp --connect 127.0.0.1:7777` and calls CamCraft's
 | slot mill, slitting saw | `t_slot` (`keyseat` if the name says keyseat/Woodruff) |
 | lollipop mill | `lollipop` |
 | turning general / boring / grooving / threading | `turning` / `bore` / `groove` / `thread` (see [Lathe tools](#lathe-tools)) |
-| dovetail mill | `dovetail` (angle 90 - `TA`: Fusion measures off the axis, CamCraft off the bottom face) |
+| dovetail mill | `dovetail` (angle 90 - `TA`: Fusion measures off the axis, CamCraft off the bottom face); with a corner radius it is skipped |
 
 - Inch libraries are converted to mm (CamCraft only reads mm).
 - Stick-out: flute length `LCF`, shank length `LB - LCF`.
@@ -243,8 +245,16 @@ This runs `camcraft-cli mcp --connect 127.0.0.1:7777` and calls CamCraft's
   only neck), with a warning. A dovetail's head is capped the same way where
   its flank narrows to the neck: Fusion records the shank, not the narrower
   neck under the head, so CamCraft sees a shallower cutter and a body no
-  narrower than the real one. A neck as wide as the head (Fusion gives no
-  narrower neck) is skipped.
+  narrower than the real one.
+- Undercut cutters **with a shank as wide as the head** (most Harvey keyseat
+  and dovetail cutters): the neck is the narrow start of Fusion's shoulder and
+  shaft segments, as far as it stays that narrow. The rest of the shaft is
+  drawn under the holder, so CamCraft holds a slot deeper than the neck's
+  reach. Without a holder in Fusion that holder is the default one
+  (`--holder-d`, `--holder-len`, `--default-holder`). With
+  `--holder-cylinders` the one cylinder starts at the neck's top and encloses
+  shank and holder. A dovetail whose shank widens right from the head has no
+  reach past its head. If Fusion states no narrower neck, the tool is skipped.
 - Flat bottom drills (point angle `SIG` 180) become a center-cutting
   `end_mill`, with a warning. CamCraft refuses a tip angle of 180 and wants a
   point on every drill, and its drilling cycles take only drills, taps and
@@ -265,9 +275,9 @@ This runs `camcraft-cli mcp --connect 127.0.0.1:7777` and calls CamCraft's
   Without a `shoulder-diameter` the neck is the tooth root at the coarsest
   pitch, `DC - 2 x 0.5413 x TPX`, with a warning: a wider neck could not cut
   that thread over its reach. With `--holder-cylinders` the one cylinder
-  starts at the neck's top and encloses shank and holder. A thread mill that has an `LCF` stays multi-form, whatever
-  its `NT`: in real libraries the same cutter is stored with `NT` 1 and 3, so
-  `NT` alone does not tell.
+  starts at the neck's top and encloses shank and holder. A thread mill that
+  has an `LCF` stays multi-form, whatever its `NT`: in real libraries the same
+  cutter is stored with `NT` 1 and 3, so `NT` alone does not tell.
 - Corner chamfer end mills become a `bull_nose`, with a warning: CamCraft has
   no chamfered corner. The corner radius is the chamfer's shorter leg (for a
   45 degree chamfer: `chamfer-width`), so the written cutter is never smaller
@@ -357,8 +367,8 @@ row is listed with the reason (`unmatched`, `duplicate <material>`,
   compensation point than Fusion's tip tangent. A blade's touch-off corner is
   always CamCraft's default: check it ([#20](https://github.com/bnegt/Fusitool2Craftool/issues/20)).
 - A blade's corner radius is not written (CamCraft's blade is square), with a
-  warning. A partial profile threading insert is written for its `TP`, with a
-  warning if Fusion states a larger pitch.
+  warning. A partial profile threading insert is written for its `TP` (the
+  coarsest pitch, in vendor libraries), with a warning if Fusion states a range.
 
 ### Default speeds
 
@@ -395,6 +405,7 @@ values, not cutting data.
 | form mill | CamCraft has no custom-profile mill (its `Form` kind is a lathe form gauge) |
 | internal and face grooving, round grooving, internal threading tools | CamCraft's blade and threading insert are outside tools, and its blade is square |
 | threading tools without a pitch (`TP`) or with a form other than 60 degrees | no known V width ([#20](https://github.com/bnegt/Fusitool2Craftool/issues/20)) |
+| dovetail mill with a corner radius | CamCraft's dovetail has a sharp corner. Fusion's `DC` is at the top of the radius, so CamCraft's whole flank would be too thin (up to 1.3 mm in vendor libraries) and it would miss a gouge |
 | circle segment mill (barrel, lens, oval, taper) | CamCraft has no kind for them |
 | probe | not a cutter |
 | waterjet, laser and plasma cutter; laser powder, laser wire and electric arc wire | cutting and additive heads, not cutters |
@@ -438,8 +449,8 @@ Autodesk's public vendor libraries (Harvey, Sandvik, Iscar, Haas, ...;
 `tests/test_camcraft_live.py` imports converted libraries into a real,
 headless CamCraft: the sample fixture, an edge-case library (inch units,
 left-hand tap, drill/tap feeds, legacy presets, material rows, thread mills,
-corner chamfers, chamfer, face mill, boring bar, lathe tools) and every
-library in `private/`. Every tool written must come back as added, none
+corner chamfers, chamfer, face mill, boring bar, undercut cutters, lathe tools)
+and every library in `private/`. Every tool written must come back as added, none
 renamed or skipped. It runs when
 `camcraft-cli` is on `PATH` or `CAMCRAFT_CLI` points at it, and is skipped
 otherwise:
@@ -449,10 +460,10 @@ CAMCRAFT_CLI=~/camcraft-0.26.0-linux-x86_64/camcraft-cli \
     python3 -m unittest discover -s tests -t .
 ```
 
-Last run (CamCraft 0.26.0, 2026-11-25): 65 libraries, 132,396 tools written
-with default speeds (72,831 without), all imported, none renamed or skipped,
-with and without `--all-presets` (37,237 material rows). 40 of the libraries
-and 124,714 of the tools are Autodesk's vendor libraries; with them the whole
+Last run (CamCraft 0.26.0, 2026-11-25): 65 libraries, 134,388 tools written
+with default speeds (74,823 without), all imported, none renamed or skipped,
+with and without `--all-presets` (37,252 material rows). 40 of the libraries
+and 126,707 of the tools are Autodesk's vendor libraries; with them the whole
 suite takes about 2.5 minutes (1 minute without CamCraft).
 
 Converted lathe tools turn, bore, groove and thread a part in CamCraft, and
@@ -461,6 +472,8 @@ a real thread in CamCraft with a converted single-form thread mill: it must
 verify clean within the reach, and be held for a shank collision deeper than
 the reach, or with the plain shank. A shank no wider than the teeth is not
 caught by CamCraft past the reach, so mind the `shoulder-length` there.
+Keyseat and dovetail cutters with a shank as wide as their head cut an undercut
+slot clean within the neck's reach and are held for a shank collision past it.
 
 ### CamCraft upstream check
 

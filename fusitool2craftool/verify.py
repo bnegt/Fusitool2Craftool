@@ -80,10 +80,16 @@ def compare(d: dict, entry: dict, options=None) -> list[str]:
 
     check("diameter", f("DC"), "DC")
     flute, flute_key = f("LCF"), "LCF"
+    body_end = None
     if ftype in ("slot mill", "lollipop mill", "dovetail mill"):
         # undercut: the neck is the wider of the shaft / shoulder diameters
         necks = [v for v in (f("SFDM"), f("shoulder-diameter")) if v]
-        if necks:
+        split = _undercut_neck(entry)
+        if split:
+            # as wide as the head: the narrow start of the shaft (#27)
+            necks, body_end = [2 * split[0]], split[1]
+            check("shank_d", necks[0], "shaft segments")
+        elif necks:
             check("shank_d", max(necks), "max(SFDM, shoulder-diameter)")
         if ftype == "lollipop mill" and necks and flute is not None and f("DC"):
             r, sr = f("DC") / 2, max(necks) / 2
@@ -92,6 +98,8 @@ def compare(d: dict, entry: dict, options=None) -> list[str]:
                 flute, flute_key = meet, "LCF capped where the neck leaves the ball"
         ta = g.get("TA")
         if ftype == "dovetail mill" and _is_num(ta):
+            if f("RE"):
+                out.append("a dovetail with a corner radius is written as CamCraft's sharp one, too thin up its flank")
             check("tip_angle", 90.0 - ta, "90 - TA")  # Fusion: off the axis; CamCraft: off the bottom
             if necks and flute is not None and f("DC") and 0 < ta < 90:
                 top = (f("DC") - max(necks)) / 2 / math.tan(math.radians(ta))  # flank meets the neck
@@ -100,7 +108,7 @@ def compare(d: dict, entry: dict, options=None) -> list[str]:
     elif f("SFDM") and not (ftype == "thread mill" and flute is None):
         check("shank_d", f("SFDM"), "SFDM")
     check("flute_len", flute, flute_key)
-    body = f("LB") or f("OAL")
+    body = body_end or f("LB") or f("OAL")
     single = ftype == "thread mill" and flute is None and g.get("NT") == 1
     if single:
         out.extend(_single_form_problems(d, g, f, check, body))
@@ -387,11 +395,64 @@ def _holder_segments(entry: dict) -> list[tuple[float, float, float]] | None:
     return out
 
 
-def _with_shank(segs, entry: dict, options):
-    """The holder segments with a single-form thread mill's shank under them.
+def _undercut_neck(entry: dict):
+    """(neck radius, neck end, rest) of an undercut cutter whose shank is as wide as its head (#27).
 
-    Its CamCraft shank is the neck, so the real shank is part of the body
-    (#16), also when the holder itself is the default one.
+    Reads Fusion's body above the head as a line of (z, radius) points. The
+    neck's radius is the widest of its first 0.001 mm, and it ends at the
+    first point that is wider; the rest are (height, lower r, upper r) up to
+    the body's end. None where Fusion gives no narrower neck.
+    """
+    g = entry.get("geometry") or {}
+    unit = INCH if str(entry.get("unit", "")).lower() in ("inches", "inch", "in") else 1.0
+
+    def f(key):
+        return float(g[key]) * unit if _is_num(g.get(key)) else 0.0
+
+    if str(entry.get("type", "")).lower() not in ("slot mill", "lollipop mill", "dovetail mill"):
+        return None
+    lcf, head, shank, body = f("LCF"), f("DC"), f("SFDM"), f("LB") or f("OAL")
+    if not (lcf and head and shank and body) or max(shank, f("shoulder-diameter")) < head:
+        return None
+    line = [(lcf, 0.0)]
+    if f("shoulder-length") > lcf + 1e-6:
+        line += [(lcf, f("shoulder-diameter") / 2), (f("shoulder-length"), f("shoulder-diameter") / 2)]
+    for seg in (entry.get("shaft") or {}).get("segments") or []:
+        try:
+            h, lo, up = (float(seg[k]) * unit for k in ("height", "lower-diameter", "upper-diameter"))
+        except (KeyError, TypeError, ValueError):
+            return None
+        z = line[-1][0]
+        line += [(z, lo / 2), (z + h, up / 2)]
+    z = line[-1][0]
+    if z > body + 1e-6 or any(r <= 0 for _, r in line[1:]):
+        return None
+    if body - z > 1e-6:
+        line += [(z, shank / 2), (body, shank / 2)]
+    line = line[1:]
+
+    def at(a, b, z):
+        return a[1] if b[0] - a[0] < 1e-12 else a[1] + (b[1] - a[1]) * (z - a[0]) / (b[0] - a[0])
+
+    stop = lcf + 0.001
+    neck = max([r for z, r in line if z < stop - 1e-12]
+               + [at(a, b, stop) for a, b in zip(line, line[1:]) if a[0] < stop - 1e-12 and b[0] >= stop])
+    for i, (a, b) in enumerate(zip(line, line[1:])):
+        if b[1] > neck + 1e-9:
+            end = a[0] if b[0] - a[0] < 1e-12 else a[0] + (neck - a[1]) * (b[0] - a[0]) / (b[1] - a[1])
+            rest = [(end, neck)] + line[i + 1:]
+            segs = [(q[0] - p[0], p[1], q[1]) for p, q in zip(rest, rest[1:]) if q[0] - p[0] > 1e-12]
+            return (neck, end, segs) if 0 < neck < head / 2 else None
+    return None
+
+
+def _with_shank(segs, entry: dict, options):
+    """The holder segments with the shank under them that is not CamCraft's.
+
+    The CamCraft shank of a single-form thread mill is its neck, and so is
+    an undercut cutter's with a shank as wide as its head. The real shank is
+    then part of the body (#16, #27), also when the holder itself is the
+    default one.
     """
     g = entry.get("geometry") or {}
     unit = INCH if str(entry.get("unit", "")).lower() in ("inches", "inch", "in") else 1.0
@@ -399,18 +460,23 @@ def _with_shank(segs, entry: dict, options):
     def f(key):
         return float(g[key]) * unit if _is_num(g.get(key)) else None
 
-    if str(entry.get("type", "")).lower() != "thread mill" or f("LCF") or g.get("NT") != 1:
+    split = _undercut_neck(entry)
+    if split:
+        under = split[2]
+    elif str(entry.get("type", "")).lower() != "thread mill" or f("LCF") or g.get("NT") != 1:
         return segs
-    body = f("LB") or f("OAL")
-    neck = _single_neck(g, f, body)
-    if not neck:
-        return segs
+    else:
+        body = f("LB") or f("OAL")
+        neck = _single_neck(g, f, body)
+        if not neck:
+            return segs
+        r = (f("SFDM") or f("DC")) / 2
+        under = [(body - neck[0], r, r)]
     if not segs:
         if options is None:
             return segs
         segs = [(options.holder_len, options.holder_d / 2, options.holder_d / 2)]
-    r = (f("SFDM") or f("DC")) / 2
-    return [(body - neck[0], r, r)] + segs
+    return under + segs
 
 
 def _holder_problems(d: dict, entry: dict, options=None) -> list[str]:
