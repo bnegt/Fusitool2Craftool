@@ -10,7 +10,7 @@ one go is included.
 
 Pure Python 3.10+, no dependencies. For **CamCraft 0.26.0 or newer**; older
 versions may refuse a library. Tested against CamCraft 0.26.0: all
-134,904 tools converted from 65 real libraries import without a change (see
+133,591 tools converted from 65 real libraries import without a change (see
 [Testing against CamCraft](#testing-against-camcraft)).
 
 ## How to run
@@ -176,7 +176,7 @@ NOT IMPORTED: 2 roundover bits, 4 tapered ball mills - CamCraft has no tool type
 
 Other tools that cannot be converted ([Not converted](#not-converted)) are
 listed in red the same way, with their family if it has a name: reamers,
-counterbores, form mills, circle segment mills, corner radius dovetail mills,
+counterbores, form mills, left-hand cutters, circle segment mills, corner radius dovetail mills,
 probes, holder parts, cutting and additive heads, and some lathe tools. Colour is used when writing to a terminal; set `NO_COLOR=1` to turn it
 off or `FORCE_COLOR=1` to force it.
 
@@ -469,6 +469,7 @@ the tools but **no operation cuts with a flat or ball tip yet**.
 | internal and face grooving, round grooving, internal threading tools | CamCraft's blade and threading insert are outside tools, and its blade is square |
 | threading tools without a pitch (`TP`) or with a form other than 60 degrees | no known V width ([#20](https://github.com/bnegt/Fusitool2Craftool/issues/20)) |
 | dovetail mill with a corner radius | CamCraft's dovetail has a sharp corner. Fusion's `DC` is at the top of the radius, so CamCraft's whole flank would be too thin (up to 1.3 mm in vendor libraries) and it would miss a gouge ([NeoTech/Camcraft#4004](https://github.com/NeoTech/Camcraft/issues/4004)) |
+| left-hand cutter (`HAND` false) other than a left-hand tap | it needs a reversed spindle, and a CamCraft tool has no cutter hand: CamCraft would turn it forward ([#38](https://github.com/bnegt/Fusitool2Craftool/issues/38)) |
 | circle segment mill (barrel, lens, oval, taper) | CamCraft has no kind for them |
 | probe | not a cutter |
 | waterjet, laser and plasma cutter; laser powder, laser wire and electric arc wire | cutting and additive heads, not cutters |
@@ -523,10 +524,10 @@ CAMCRAFT_CLI=~/camcraft-0.26.0-linux-x86_64/camcraft-cli \
     python3 -m unittest discover -s tests -t .
 ```
 
-Last run (CamCraft 0.26.0, 2026-11-25): 65 libraries, 134,904 tools written
+Last run (CamCraft 0.26.0, 2026-11-25): 65 libraries, 133,591 tools written
 with default speeds (23,951 without), all imported, none renamed or skipped,
 with and without `--all-presets` (37,276 material rows). 40 of the libraries
-and 127,217 of the tools are Autodesk's vendor libraries; with them the whole
+and 125,904 of the tools are Autodesk's vendor libraries; with them the whole
 suite takes about 2.5 minutes (1 minute without CamCraft).
 
 Converted lathe tools turn, bore, groove and thread a part in CamCraft, and

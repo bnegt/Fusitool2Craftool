@@ -6,10 +6,10 @@ download them into `private/test-libraries/` (git-ignored). The tests then
 convert and verify every one of them (`PrivateLibraryTests` in
 `tests/test_convert.py`).
 
-Last checked 2026-11-25 (with default speeds): 64 libraries convert, 134,900
+Last checked 2026-11-25 (with default speeds): 64 libraries convert, 133,587
 tools written, all verified and accepted by CamCraft 0.26.0 (with and without
 `--all-presets`): 24 of the sources below with 7,683 tools, and 40 of
-[Autodesk's vendor libraries](#autodesks-vendor-libraries) with 127,217. The
+[Autodesk's vendor libraries](#autodesks-vendor-libraries) with 125,904. The
 others convert to nothing: `OMAX.json` (one waterjet), three holder libraries
 and two probe libraries.
 
@@ -91,7 +91,7 @@ or with only placeholder speeds, gives none), "With defaults" uses the tests' de
 | Tormach/Tormach - PCNC 1100 - Starter | 20 | 16 | 16 | flat end mill, holder, spot drill |
 | Sandvik Coromant/Solid End Mills | 2,876 | 0 | 2,844 | bull nose end mill, flat end mill, ball end mill |
 | Sandvik Coromant/Solid Hole Making | 4,315 | 0 | 4,085 | tap right hand, drill, reamer |
-| Guhring/Solid Hole Making | 20,121 | 0 | 20,121 | drill, center drill, spot drill |
+| Guhring/Solid Hole Making | 20,121 | 0 | 18,808 | drill, center drill, spot drill |
 | NexGen Tooling/NexGen Tooling | 3,981 | 0 | 3,981 | bull nose end mill, flat end mill, ball end mill |
 | Garr Tool/Garr Tool | 11,092 | 0 | 10,497 | drill, bull nose end mill, flat end mill |
 | Valor Holemaking/Valor Holemaking | 2,251 | 0 | 2,117 | drill, form mill, chamfer mill |
@@ -119,12 +119,12 @@ or with only placeholder speeds, gives none), "With defaults" uses the tests' de
 | Ingersoll/Turning Metric/Turning Metric | - | - | - | not available |
 | Widia/Turning Imperial/Turning Imperial | - | - | - | not available |
 | Widia/Turning Metric/Turning Metric | - | - | - | not available |
-| **Total** | **134,498** | **16,334** | **127,217** | |
+| **Total** | **134,498** | **16,334** | **125,904** | |
 
 The tools skipped even with defaults, by reason: form mill 2,742; tapered mill
 925; reamer 876; counterbore 434; dovetail with a corner radius 372; radius
-mill 270; probe 22; undercut cutter without a neck narrower than the head 3;
-other 17.
+mill 270; left-hand cutter 1,313; probe 22; undercut cutter without a neck
+narrower than the head 3; other 17.
 
 ## Fusion tool types covered
 

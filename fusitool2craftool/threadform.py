@@ -43,9 +43,6 @@ def is_named(entry: dict) -> bool:
 
 def read(entry: dict, dc: float, lcf: float | None, body: float | None) -> ThreadForm:
     """The thread mill in a form mill's outline; ToolRefused if it is none we can write."""
-    g = entry.get("geometry") or {}
-    if g.get("HAND") is False:
-        raise c.ToolRefused("thread mill stored as a form mill: it cuts left-hand, and CamCraft would turn it right-hand")
     points = outline(entry)
     if len(points) < 4 or not lcf or body is None:
         raise c.ToolRefused("thread mill stored as a form mill without an outline")

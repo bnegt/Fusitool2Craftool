@@ -67,6 +67,9 @@ def compare(d: dict, entry: dict, options=None) -> list[str]:
     if ftype.startswith("turning "):
         return _compare_lathe(d, entry, options)
 
+    if g.get("HAND") is False and ftype != "tap left hand":
+        out.append("a left-hand cutter is written as a right-hand one")
+
     def check(field: str, expected, fusion_key: str) -> None:
         if expected is None:
             return
@@ -360,9 +363,6 @@ def _outline_above(entry: dict, start: float) -> list[tuple[float, float, float]
 def _form_thread_problems(d: dict, entry: dict, f, check) -> list[str]:
     """A thread mill stored as a form mill (#37), by where its outline crosses the flanks."""
     out: list[str] = []
-    g = entry.get("geometry") or {}
-    if g.get("HAND") is False:
-        out.append("a left-hand cutter is written as a right-hand thread mill")
     line, dc, pitch = _outline(entry), f("DC") or 0.0, d.get("pitch") or 0.0
     flute, shank = d.get("flute_len") or 0.0, d.get("shank_len") or 0.0
     check("tip_angle", 60.0, "60 degree flanks")

@@ -238,11 +238,24 @@ FAMILIES = {
 }
 
 
+def is_left_hand(entry: dict) -> bool:
+    """A milling or drilling tool that cuts turning backwards (#38).
+
+    A left-hand tap is one too, but CamCraft knows it (``thread_hand``).
+    Lathe tools state their hand elsewhere.
+    """
+    ftype = str(entry.get("type", "")).strip().lower()
+    return ((entry.get("geometry") or {}).get("HAND") is False
+            and ftype != "tap left hand" and not ftype.startswith("turning "))
+
+
 def unsupported_category(entry: dict) -> str | None:
     """Name the known cutter families CamCraft cannot represent."""
     ftype = str(entry.get("type", "")).strip().lower()
     g = entry.get("geometry") or {}
     dc, re_ = _num(g.get("DC")), _num(g.get("RE"))
+    if ftype in KINDS and is_left_hand(entry):
+        return "left-hand cutter"
     if ftype == "tapered mill":
         return "tapered ball mill" if re_ and re_ > 0 else "tapered mill"
     if (ftype in ("ball end mill", "bull nose end mill", "flat end mill", "radius mill", "form mill")
@@ -313,6 +326,9 @@ def convert_tool(entry: dict, options: Options, presets_report: Counter | None =
         kind = "thread_mill" if threadform.is_named(entry) else None
     if kind is None:
         raise ToolRefused(f"Fusion tool type '{ftype or '?'}' has no CamCraft counterpart yet")
+
+    if is_left_hand(entry):
+        raise ToolRefused("left-hand cutter (HAND): it needs a reversed spindle, and CamCraft would turn it forward")
 
     if ftype.startswith("turning "):
         return _convert_lathe(entry, options, warnings, presets_report, defaults_report)
