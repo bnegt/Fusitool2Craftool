@@ -1080,6 +1080,66 @@ def multi_form(geometry=None, pitch=0.8, rows=10, dc=3.9, height=0.6, flank=30.0
                           "profile": [{"end": list(q)} for q in line], **(geometry or {})}, **extra)
 
 
+def single_tooth(height=0.55, flat=0.0, dc=3.9, neck=12.0, flank=(30.0, 30.0), lower=None, **extra):
+    """A single-form thread mill stored as a form mill (#47): one tooth at the tip, a neck, a cone to a 6 mm shank."""
+    up, down = ((height if i or lower is None else lower) * math.tan(math.radians(a)) for i, a in enumerate(flank))
+    root, end = dc / 2 - height, up + flat + down
+    line = [(0, 0), (dc / 2 - (height if lower is None else lower), 0), (dc / 2, up)]
+    line += ([(dc / 2, up + flat)] if flat else []) + [(root, end), (root, end + neck), (3, end + neck + 3), (3, 60), (0, 60)]
+    return tool("form mill", description=extra.pop("description", "SINGLE FORM #10 THREAD MILLING CUTTER"),
+                geometry={"DC": dc, "LCF": end, "LB": end + neck + 10, "OAL": 60, "SFDM": 6, "NOF": 3, "HAND": True, "TP": 0,
+                          "profile": [{"end": list(q)} for q in line]}, **extra)
+
+
+class SingleToothTests(unittest.TestCase):
+    """#47: the tooth's height and crest give a single-form thread mill its pitch range."""
+
+    verifies = lambda self, result: FormThreadMillTests.verifies(self, result)  # noqa: E731
+    reason = lambda self, entry: FormThreadMillTests.reason(self, entry)  # noqa: E731
+
+    def test_sharp_tooth(self):
+        d, result = one(single_tooth())
+        self.assertEqual((d["kind"], d["diameter"], d["tip_angle"], d["pitch_min"]), ("thread_mill_single", 3.9, 60, 0.2))
+        self.assertAlmostEqual(d["pitch"], 0.55 / 0.5413, delta=0.004)
+        self.assertGreaterEqual(d["pitch"], 0.55 / 0.5413 - 1e-4)  # a tooth ground for a pitch cuts it
+        self.assertAlmostEqual(d["flute_len"], 1.1 * math.tan(math.radians(30)), places=5)
+        self.assertAlmostEqual(d["shank_d"], 2.8)
+        self.assertAlmostEqual(d["shank_len"], 12, places=5)
+        self.assertTrue(any("check the maker's range" in w for w in result.warnings))
+        self.assertEqual(self.verifies(result), [])
+
+    def test_flat_crest_bounds_the_finest_pitch(self):
+        for flat, finest in ((0.02, 0.2), (0.05, 0.4), (0.1, 0.8)):
+            d, result = one(single_tooth(flat=flat))
+            self.assertAlmostEqual(d["pitch_min"], finest, places=3)
+            self.assertEqual(self.verifies(result), [])
+
+    def test_lower_side_counts(self):
+        d, result = one(single_tooth(height=0.6, lower=0.5))
+        self.assertAlmostEqual(d["pitch"], 0.5 / 0.5413, delta=0.004)
+        self.assertEqual(self.verifies(result), [])
+
+    def test_refused(self):
+        for entry, why in ((single_tooth(flat=0.2), "fits no pitch"), (single_tooth(flank=(30, 27.5)), "60 degree"),
+                           (single_tooth(flank=(14.5, 30)), "60 degree"), (single_tooth(description="SINGLE FORM CUTTER"), "counterpart")):
+            self.assertIn(why, self.reason(entry))
+
+    def test_shank_under_the_holder(self):
+        d, _ = one(single_tooth())
+        self.assertEqual([round(q[1], 3) for q in d["body"]["spun"][:4]], [0, 1.4, 3, 3])
+
+    def test_output_check_reads_the_tooth(self):
+        for change in ({"pitch": 1.3}, {"pitch": 0.8}, {"pitch_min": 0.1}, {"pitch_min": 0.5}, {"kind": "thread_mill"},
+                       {"flute_len": 0.3}, {"shank_d": 2.0}, {"tip_angle": 55.0}):
+            d, result = one(single_tooth())
+            d.update(change)
+            self.assertTrue(self.verifies(result), change)
+        # rows of teeth are no single form
+        d, result = one(multi_form())
+        d.update(kind="thread_mill_single", pitch_min=0.2)
+        self.assertTrue(any("teeth" in p for p in self.verifies(result)))
+
+
 class FormThreadMillTests(unittest.TestCase):
     """#37: multi-form thread mills that vendors store as form mills."""
 
@@ -1143,7 +1203,7 @@ class FormThreadMillTests(unittest.TestCase):
         taper = lambda line: [(r + (0.03 * z if 0 < z < 8 else 0), z) for r, z in line]  # noqa: E731
         uneven = lambda line: [(r, z + (0.05 if 4 < z < 4.7 else 0)) for r, z in line]  # noqa: E731
         back = lambda line: line[:-3] + [(2, 5), (3, 20)] + line[-2:]  # noqa: E731
-        for entry, why in ((multi_form({"HAND": False}), "left-hand"), (multi_form(rows=1), "one row"),
+        for entry, why in ((multi_form({"HAND": False}), "left-hand"), (multi_form(rows=0, geometry={"LCF": 3}), "without teeth"),
                            (multi_form(shape=taper), "not all on its diameter"), (multi_form(shape=uneven), "evenly"),
                            (multi_form(height=0.45), "high teeth"), (multi_form(flank=27.5), "60 degree"),
                            (multi_form(pitch=0.77), "no standard one"), (multi_form(shape=back), "runs back"),

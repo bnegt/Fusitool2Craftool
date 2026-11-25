@@ -28,7 +28,7 @@ from fusitool2craftool.convert import Options, convert
 from fusitool2craftool.fusion import load_library
 from fusitool2craftool.push import PROTOCOL_VERSION, PushError, _close, _content_text, _Session, push
 
-from .test_convert import ARBOR, DEFAULT_SPEEDS, FIXTURES, PRIVATE, corner_chamfer, holder, keyseat, multi_form, saw, shafted, single_form, tapered, tool
+from .test_convert import ARBOR, DEFAULT_SPEEDS, FIXTURES, PRIVATE, corner_chamfer, holder, keyseat, multi_form, saw, shafted, single_form, single_tooth, tapered, tool
 from .test_lathe import TYPES, lathe
 
 CLI = os.environ.get("CAMCRAFT_CLI") or shutil.which("camcraft-cli")
@@ -58,6 +58,8 @@ def edge_cases() -> list[dict]:
              geometry={"DC": 0.125, "LCF": 0.375, "LB": 0.92, "SFDM": 0.125, "SIG": 60},
              presets=[{"name": "P", "n": 4000, "v_f_plunge": 8}]),
         multi_form(description="M5-0.80 THREAD MILL"),
+        single_tooth(description="SINGLE FORM THREAD MILL"),
+        single_tooth(flat=0.06, description="SINGLE FORM THREAD MILL, FLAT CREST"),
         shafted(description="shaft wider than the shank", segments=[(10, 10, 10), (5, 10, 16)]),
         shafted("face mill", {"DC": 50, "shoulder-length": 23, "shoulder-diameter": 50}, [(4, 26, 22)], description="collar"),
         shafted(geometry={"SFDM": 5}, segments=[(10, 12, 5)], description="cone above the flutes"),
@@ -258,7 +260,7 @@ def plate_with_hole(path: Path, hole: float, depth: float, size: float = 30.0, n
 class ThreadMillingLiveTests(unittest.TestCase):
     """#16, #37: CamCraft threads an M5 hole with a converted thread mill."""
 
-    def verify_thread(self, depth: float, change=None, mill=None) -> dict:
+    def verify_thread(self, depth: float, change=None, mill=None, pitch=0.8) -> dict:
         """Drill and thread an M5x0.8 hole; CamCraft's verify of the thread."""
         mill = mill or single_form()  # D3.9 under a 4 mm shank, reach 16
         result = convert([
@@ -274,7 +276,7 @@ class ThreadMillingLiveTests(unittest.TestCase):
             call("import_model", path=str(Path(tmp) / "part.stl"), name="part")
             call("set_stock", box={"dx": 30, "dy": 30, "dz": depth})
             call("import_tool_library", path=str(library), mode="add", format="camtools")
-            for kind, name, mill, params in (("drill", "Dr", "D", {}), ("thread", "T", "THREAD MILL", {"pitch": 0.8})):
+            for kind, name, mill, params in (("drill", "Dr", "D", {}), ("thread", "T", "THREAD MILL", {"pitch": pitch})):
                 call("add_operation", kind=kind, name=name, tool=mill, source="part", params=params)
                 self.assertEqual(json.loads(call("detect_holes", name=name))["holes"], 1)
                 call("generate", name=name)
@@ -299,6 +301,14 @@ class ThreadMillingLiveTests(unittest.TestCase):
         self.assertEqual(report["findings"], [])
         self.assertTrue(report["ok"], report)
         self.assert_shank_hit(self.verify_thread(20, mill=multi_form()))
+
+    def test_single_form_stored_as_a_form_mill(self):
+        # #47: the pitch range is from the outline; 0.8 mm is inside it. 12.6 mm of reach
+        mill = single_tooth(dc=3.2)
+        self.assertEqual(self.verify_thread(11, mill=mill)["findings"], [])
+        self.assert_shank_hit(self.verify_thread(18, mill=mill))
+        with self.assertRaisesRegex(AssertionError, "range"):  # its tooth is too low for 1.25 mm
+            self.verify_thread(11, mill=mill, pitch=1.25)
 
     def test_plain_shank_is_held(self):
         # why the neck is written: the 4 mm shank right above the tooth hits

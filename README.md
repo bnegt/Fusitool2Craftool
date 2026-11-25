@@ -10,7 +10,7 @@ one go is included.
 
 Pure Python 3.10+, no dependencies. For **CamCraft 0.26.0 or newer**; older
 versions may refuse a library. Tested against CamCraft 0.26.0: all
-133,591 tools converted from 65 real libraries import without a change (see
+133,935 tools converted from 65 real libraries import without a change (see
 [Testing against CamCraft](#testing-against-camcraft)).
 
 ## How to run
@@ -229,7 +229,7 @@ This runs `camcraft-cli mcp --connect 127.0.0.1:7777` and calls CamCraft's
 | drill, spot drill, center drill | `drill` (`end_mill` if the point angle is 180: a flat bottom drill; `taper` if it is 60 or less) |
 | tap right/left hand | `tap` |
 | thread mill | `thread_mill` (`thread_mill_single` if it has one row of teeth, `NT` 1, and no `LCF`) |
-| form mill named thread mill | `thread_mill`, if its outline is a straight multi-form cutter (see below) |
+| form mill named thread mill | `thread_mill`, or `thread_mill_single` with one tooth, if its outline is a straight 60 degree cutter (see below) |
 | corner chamfer end mill | `bull_nose` (an approximation, see below) |
 | boring bar | `bore` |
 | slot mill, slitting saw | `t_slot` (`keyseat` if the name says keyseat/Woodruff) |
@@ -304,12 +304,16 @@ This runs `camcraft-cli mcp --connect 127.0.0.1:7777` and calls CamCraft's
   cutter is stored with `NT` 1 and 3, so `NT` alone does not tell.
 - **Thread mills stored as form mills** (Harvey and Valor do, without a pitch):
   if the name says thread mill, the outline is read
-  ([#37](https://github.com/bnegt/Fusitool2Craftool/issues/37)). It must show at
-  least two even rows of 60 degree teeth, all on `DC` and as high as CamCraft
-  assumes (0.5413 x pitch). The pitch is the standard one (ISO metric or
+  ([#37](https://github.com/bnegt/Fusitool2Craftool/issues/37)). It must show
+  one tooth, or even rows of teeth, of the 60 degree form, all on `DC`; rows must be
+  as high as CamCraft assumes (0.5413 x pitch). Their pitch is the standard one (ISO metric or
   threads per inch) within 0.1 % of the outline's, because CamCraft compares
   pitches exactly. The neck is the outline above the teeth as far as it stays
-  narrow, and the rest is drawn under the holder. Left-hand cutters (`HAND`
+  narrow, and the rest is drawn under the holder. **One tooth** (Harvey's
+  single-form cutters) gets a pitch range instead, with a warning
+  ([#47](https://github.com/bnegt/Fusitool2Craftool/issues/47)): the coarsest is
+  the tooth's height / 0.5413, the finest 8 x the flat of its crest, or 0.2 mm
+  if it is sharp. The maker's range may be smaller. Left-hand cutters (`HAND`
   false, Harvey's tri-forms) are skipped: they need a reversed spindle.
 - Corner chamfer end mills become a `bull_nose`, with a warning: CamCraft has
   no chamfered corner. The corner radius is the chamfer's shorter leg (for a
@@ -491,7 +495,7 @@ the tools but **no operation cuts with a flat or ball tip yet**.
 | tapered ball mill / tapered mill | CamCraft 0.26.0 has no tapered cutter; with `--unreleased-tapers` they are written for a newer build ([Tapered mills](#tapered-mills)) |
 | roundover bit (ball end mill with radius > D/2) | CamCraft has no form/roundover cutter |
 | reamer, counterbore | CamCraft has no kind for them ([NeoTech/Camcraft#897](https://github.com/NeoTech/Camcraft/issues/897)) |
-| form mill | CamCraft has no custom-profile mill (its `Form` kind is a lathe form gauge). Multi-form thread mills stored as form mills convert; single-form, left-hand and tapered (NPT) ones, and outlines that run back on themselves, do not ([#37](https://github.com/bnegt/Fusitool2Craftool/issues/37)) |
+| form mill | CamCraft has no custom-profile mill (its `Form` kind is a lathe form gauge). Thread mills stored as form mills convert; left-hand and tapered (NPT) ones, and outlines that run back on themselves, do not ([#37](https://github.com/bnegt/Fusitool2Craftool/issues/37)) |
 | internal and face grooving, round grooving, internal threading tools | CamCraft's blade and threading insert are outside tools, and its blade is square |
 | threading tools without a pitch (`TP`) or with a form other than 60 degrees | no known V width ([#20](https://github.com/bnegt/Fusitool2Craftool/issues/20)) |
 | dovetail mill with a corner radius | CamCraft's dovetail has a sharp corner. Fusion's `DC` is at the top of the radius, so CamCraft's whole flank would be too thin (up to 1.3 mm in vendor libraries) and it would miss a gouge ([NeoTech/Camcraft#4004](https://github.com/NeoTech/Camcraft/issues/4004)) |
@@ -550,10 +554,10 @@ CAMCRAFT_CLI=~/camcraft-0.26.0-linux-x86_64/camcraft-cli \
     python3 -m unittest discover -s tests -t .
 ```
 
-Last run (CamCraft 0.26.0, 2026-11-25): 65 libraries, 133,591 tools written
+Last run (CamCraft 0.26.0, 2026-11-25): 65 libraries, 133,935 tools written
 with default speeds (18,005 without), all imported, none renamed or skipped,
 with and without `--all-presets` (37,278 material rows). 40 of the libraries
-and 125,904 of the tools are Autodesk's vendor libraries; with them the whole
+and 126,248 of the tools are Autodesk's vendor libraries; with them the whole
 suite takes about 2.5 minutes (1 minute without CamCraft).
 
 Converted lathe tools turn, bore, groove and thread a part in CamCraft, and

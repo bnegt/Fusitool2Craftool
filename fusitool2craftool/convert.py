@@ -460,7 +460,12 @@ def convert_tool(entry: dict, options: Options, presets_report: Counter | None =
         form = threadform.read(entry, dc, lcf, body)
         d["pitch"], d["tip_angle"], d["flute_len"] = form.pitch, 60.0, form.flute_len
         d["shank_d"], d["shank_len"], below = _split_neck(form.shaft)
-        warnings.append(f"thread mill stored as a form mill: {form.pitch:.6g} mm pitch read from its outline")
+        if form.pitch_min is None:
+            warnings.append(f"thread mill stored as a form mill: {form.pitch:.6g} mm pitch read from its outline")
+        else:
+            d["kind"], d["pitch_min"] = "thread_mill_single", form.pitch_min
+            warnings.append(f"thread mill stored as a form mill: {form.pitch_min:.4g} to {form.pitch:.4g} mm pitch from its "
+                            f"tooth's crest and height, check the maker's range")
     elif kind == "thread_mill":
         pitch = length("TP")
         angle = _num(g.get("thread-profile-angle")) or 60.0

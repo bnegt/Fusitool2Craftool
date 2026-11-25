@@ -6,10 +6,10 @@ download them into `private/test-libraries/` (git-ignored). The tests then
 convert and verify every one of them (`PrivateLibraryTests` in
 `tests/test_convert.py`).
 
-Last checked 2026-11-25 (with default speeds): 64 libraries convert, 133,587
+Last checked 2026-11-25 (with default speeds): 64 libraries convert, 133,931
 tools written, all verified and accepted by CamCraft 0.26.0 (with and without
 `--all-presets`): 24 of the sources below with 7,683 tools, and 40 of
-[Autodesk's vendor libraries](#autodesks-vendor-libraries) with 125,904. The
+[Autodesk's vendor libraries](#autodesks-vendor-libraries) with 126,248. The
 others convert to nothing: `OMAX.json` (one waterjet), three holder libraries
 and two probe libraries.
 
@@ -68,7 +68,7 @@ or with only placeholder or default speeds, gives none), "With defaults" uses th
 | Library (catalogue name) | Entries | Convert | With defaults | Mostly |
 |---|---|---|---|---|
 | Harvey Tool/End Mills | 11,937 | 0 | 11,449 | flat end mill, ball end mill, bull nose end mill |
-| Harvey Tool/Holemaking and Threading | 3,959 | 0 | 2,359 | drill, form mill, spot drill |
+| Harvey Tool/Holemaking and Threading | 3,959 | 0 | 2,703 | drill, form mill, spot drill |
 | Harvey Tool/Specialty Profiles | 7,866 | 0 | 5,484 | slot mill, chamfer mill, form mill |
 | Helical Solutions/End Mills | 6,007 | 0 | 6,007 | bull nose end mill, flat end mill, ball end mill |
 | Helical Solutions/Specialty Profiles | 190 | 0 | 190 | chamfer mill, spot drill |
@@ -119,9 +119,9 @@ or with only placeholder or default speeds, gives none), "With defaults" uses th
 | Ingersoll/Turning Metric/Turning Metric | - | - | - | not available |
 | Widia/Turning Imperial/Turning Imperial | - | - | - | not available |
 | Widia/Turning Metric/Turning Metric | - | - | - | not available |
-| **Total** | **134,498** | **10,463** | **125,904** | |
+| **Total** | **134,498** | **10,463** | **126,248** | |
 
-The tools skipped even with defaults, by reason: form mill 2,742; tapered mill
+The tools skipped even with defaults, by reason: form mill 2,398; tapered mill
 925; reamer 876; counterbore 434; dovetail with a corner radius 372; radius
 mill 270; left-hand cutter 1,313; probe 22; undercut cutter without a neck
 narrower than the head 3; other 17.
@@ -154,7 +154,7 @@ or is skipped under a family name
 | electric arc wire | **none** | - | skipped: additive head |
 | face mill | 168 | 14 | `end_mill` |
 | flat end mill | 25,050 | 45 | `end_mill` |
-| form mill | 3,026 | 7 | skipped: form mill (`thread_mill` for multi-form thread mills) |
+| form mill | 3,026 | 7 | skipped: form mill (`thread_mill` or `thread_mill_single` for thread mills) |
 | holder | 1,685 | 13 | counted, see `--holders` |
 | laser cutter | 2 | 2 | skipped: sheet cutting head |
 | laser powder | **none** | - | skipped: additive head |
