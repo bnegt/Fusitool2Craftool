@@ -222,7 +222,8 @@ This runs `camcraft-cli mcp --connect 127.0.0.1:7777` and calls CamCraft's
 | chamfer mill, counter sink | `taper` (Fusion's half angle `TA` is doubled) |
 | drill, spot drill, center drill | `drill` (`end_mill` if the point angle is 180: a flat bottom drill) |
 | tap right/left hand | `tap` |
-| thread mill | `thread_mill` |
+| thread mill | `thread_mill` (`thread_mill_single` if it has one row of teeth, `NT` 1, and no `LCF`) |
+| corner chamfer end mill | `bull_nose` (an approximation, see below) |
 | boring bar | `bore` |
 | slot mill, slitting saw | `t_slot` (`keyseat` if the name says keyseat/Woodruff) |
 | lollipop mill | `lollipop` |
@@ -249,6 +250,24 @@ This runs `camcraft-cli mcp --connect 127.0.0.1:7777` and calls CamCraft's
   mill) can plunge it, because it is center cutting. Its speeds still follow
   Fusion's drill rules: the feed is the plunge feed `v_f_plunge`, and a
   `--default-* drill=` value applies to it.
+- Single-form thread mills (`NT` 1, stored without `LCF`) cut any pitch from
+  `TPN` to `TPX`. Their flute length is one coarsest pitch, the V's own
+  height. CamCraft knows one shank cylinder, so the **neck** is written as the
+  shank, up to `shoulder-length`, and the real shank is drawn at the bottom of
+  the holder body (with the default holder above it if Fusion has none).
+  Without a `shoulder-diameter` the neck is the tooth root at the coarsest
+  pitch, `DC - 2 x 0.5413 x TPX`, with a warning: a wider neck could not cut
+  that thread over its reach. With `--holder-cylinders` the one cylinder
+  starts at the neck's top and encloses shank and holder. Needs CamCraft
+  0.25.0 or newer. A thread mill that has an `LCF` stays multi-form, whatever
+  its `NT`: in real libraries the same cutter is stored with `NT` 1 and 3, so
+  `NT` alone does not tell.
+- Corner chamfer end mills become a `bull_nose`, with a warning: CamCraft has
+  no chamfered corner. The corner radius is the chamfer's shorter leg (for a
+  45 degree chamfer: `chamfer-width`), so the written cutter is never smaller
+  than the real one and closer to it than a sharp end mill. Rest material in
+  corners is understated. Without chamfer numbers it is a sharp `end_mill`.
+  **Not yet tried on a real Fusion tool** ([#18](https://github.com/bnegt/Fusitool2Craftool/issues/18)).
 - Holder: a tool's Fusion holder is drawn as it is. Its segments (from the
   tool end up to the gauge line) become a CamCraft drawn holder body
   (`body.spun`), seated on the shank's top. CamCraft's collision checks then
@@ -314,7 +333,7 @@ skipped; with defaults they get speeds, by kind and by size:
 | `KIND=value` on any of them | that kind only, e.g. `--default-vc drill=60 --default-feed drill=150`; repeat per kind |
 
 Kinds are CamCraft's: `end_mill`, `ball_nose`, `bull_nose`, `drill`, `tap`,
-`taper`, `thread_mill`, `bore`, `t_slot`, `keyseat`, `lollipop`, `dovetail`.
+`taper`, `thread_mill`, `thread_mill_single`, `bore`, `t_slot`, `keyseat`, `lollipop`, `dovetail`.
 Order for a missing value: the kind's own default beats the global one, and
 at each level an explicit rpm/feed beats v_c/f_z. A tap always feeds
 rpm x pitch. A value Fusion does state is never replaced. Every tool that
@@ -366,8 +385,8 @@ into `private/test-libraries/`.
 
 `tests/test_camcraft_live.py` imports converted libraries into a real,
 headless CamCraft: the sample fixture, an edge-case library (inch units,
-left-hand tap, drill/tap feeds, legacy presets, material rows, thread mill,
-chamfer, face mill, boring bar) and every library in `private/`. Every tool
+left-hand tap, drill/tap feeds, legacy presets, material rows, thread mills,
+corner chamfers, chamfer, face mill, boring bar) and every library in `private/`. Every tool
 written must come back as added, none renamed or skipped. It runs when
 `camcraft-cli` is on `PATH` or `CAMCRAFT_CLI` points at it, and is skipped
 otherwise:

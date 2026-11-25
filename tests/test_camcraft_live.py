@@ -23,7 +23,7 @@ from fusitool2craftool.convert import Options, convert
 from fusitool2craftool.fusion import load_library
 from fusitool2craftool.push import push
 
-from .test_convert import FIXTURES, PRIVATE, tool
+from .test_convert import FIXTURES, PRIVATE, corner_chamfer, single_form, tool
 
 CLI = os.environ.get("CAMCRAFT_CLI") or shutil.which("camcraft-cli")
 
@@ -51,6 +51,12 @@ def edge_cases() -> list[dict]:
         tool(description="tap M8 left", type_="tap left hand", geometry={"DC": 8, "TP": 1.25},
              presets=[{"name": "P", "n": 500}]),
         tool(description="thread mill", type_="thread mill", geometry={"DC": 10, "LCF": 15, "TP": 1.5}),
+        single_form(description="thread mill single-form"),
+        single_form({"DC": 0.7, "OAL": 50, "TPN": 0.25, "TPX": 0.25, "shoulder-length": 3.5}, description="thread mill M1"),
+        single_form({"shoulder-diameter": 2.5}, description="thread mill single-form held", unit="millimeters",
+                    holder={"unit": "inches", "segments": [{"height": 1, "lower-diameter": 1, "upper-diameter": 2}]}),
+        corner_chamfer(description="corner chamfer 45"),
+        corner_chamfer({"chamfer-angle": 30}, description="corner chamfer 30"),
         tool(description="face mill", type_="face mill", geometry={"DC": 50, "LCF": 5, "LB": 40, "SFDM": 22}),
         tool(description="boring bar", type_="boring bar", geometry={"DC": 12}),
         tool(description="slitting saw", type_="slot mill", unit="inches",

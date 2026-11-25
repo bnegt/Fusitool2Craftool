@@ -38,6 +38,157 @@ def one(entry, options=None):
     return result.tools[0]["definition"], result
 
 
+def single_form(geometry=None, **extra):
+    """A single-form thread mill as Fusion stores it: NT 1, no LCF (#16)."""
+    e = tool("thread mill", **extra)
+    e["geometry"] = {"DC": 3.9, "NOF": 1, "NT": 1, "OAL": 52, "SFDM": 4, "TPN": 0.5, "TPX": 0.8,
+                     "shoulder-length": 16, "thread-profile-angle": 60, "thread-tip-type": "point",
+                     **(geometry or {})}
+    return e
+
+
+def corner_chamfer(geometry=None, **extra):
+    # No real sample exists yet (#18): built from Autodesk's schema.
+    return tool("corner chamfer end mill",
+                geometry={"DC": 10, "SFDM": 10, "chamfer-width": 0.5, "chamfer-angle": 45, **(geometry or {})}, **extra)
+
+
+def verify(entries, options=None, change=None):
+    """Write, optionally damage, and check a library; the list of problems."""
+    result = convert(entries, options)
+    if change:
+        for t in result.tools:
+            change(t["definition"])
+    with tempfile.TemporaryDirectory() as tmp:
+        return verify_file(camtools.write(result, Path(tmp) / "lib.camtools"), result)
+
+
+class SingleFormThreadMillTests(unittest.TestCase):
+    def test_pitch_range_and_tooth(self):
+        d, result = one(single_form())
+        self.assertEqual(d["kind"], "thread_mill_single")
+        self.assertEqual((d["pitch_min"], d["pitch"], d["flute_len"], d["tip_angle"]), (0.5, 0.8, 0.8, 60))
+        self.assertEqual(result.version, 1)
+
+    def test_neck_is_the_shank_and_the_shank_is_drawn_above_it(self):
+        d, result = one(single_form())
+        self.assertAlmostEqual(d["shank_d"], 3.9 - 2 * 0.5413 * 0.8, places=6)
+        self.assertAlmostEqual(d["shank_len"], 16 - 0.8)
+        self.assertEqual((d["holder_d"], d["holder_len"]), (50, 36 + 40))  # encloses shank + default holder
+        self.assertEqual(d["body"]["spun"], [[16, 0, 0], [16, 2, 0], [52, 2, 0], [52, 25, 0], [92, 25, 0], [92, 0, 0]])
+        self.assertTrue(any("no neck diameter" in w for w in result.warnings))
+
+    def test_stated_neck_and_fusion_holder(self):
+        e = single_form({"shoulder-diameter": 2.5},
+                        holder={"unit": "inches", "segments": [
+                            {"height": 1, "lower-diameter": 1, "upper-diameter": 2}]})
+        d, result = one(e)
+        self.assertEqual(d["shank_d"], 2.5)
+        self.assertFalse(any("no neck diameter" in w for w in result.warnings))
+        self.assertEqual(d["body"]["spun"][1:3], [[16, 2, 0], [52, 2, 0]])
+        self.assertEqual((d["holder_d"], d["holder_len"]), (50.8, 61.4))
+        self.assertEqual(verify([e]), [])
+
+    def test_inches(self):
+        e = single_form({"DC": 0.3, "OAL": 2.5, "SFDM": 0.375, "TPN": 1 / 32, "TPX": 1 / 16, "shoulder-length": 1},
+                        unit="inches")
+        d, _ = one(e)
+        self.assertAlmostEqual(d["pitch"], 25.4 / 16, places=6)
+        self.assertAlmostEqual(d["flute_len"] + d["shank_len"], 25.4, places=5)
+        self.assertEqual(verify([e]), [])
+
+    def test_no_reach_keeps_the_shank(self):
+        e = single_form()
+        del e["geometry"]["shoulder-length"]
+        d, _ = one(e)
+        self.assertEqual((d["shank_d"], d["shank_len"]), (4, 51.2))
+        self.assertNotIn("body", d)
+        self.assertEqual(verify([e]), [])
+
+    def test_holder_cylinders(self):
+        options = Options(holder_bodies=False)
+        d, _ = one(single_form(), options)
+        self.assertNotIn("body", d)
+        self.assertEqual((d["holder_d"], d["holder_len"]), (50, 76))
+        self.assertEqual(verify([single_form()], options), [])
+
+    def test_one_pitch(self):
+        e = single_form({"TPN": 0, "TPX": 0.8})
+        d, _ = one(e)
+        self.assertEqual((d["pitch_min"], d["pitch"]), (0.8, 0.8))
+        self.assertEqual(verify([e]), [])
+
+    def test_refusals(self):
+        for geometry, why in (({"TPN": 1.0}, "finest pitch"), ({"DC": 0.9}, "no core"),
+                              ({"TPX": None}, "no pitch"), ({"NT": 3}, "no flute length")):
+            with self.subTest(geometry=geometry):
+                self.assertIn(why, convert([single_form(geometry)]).skipped[0].reason)
+
+    def test_with_flute_length_stays_multi_form(self):
+        d, _ = one(tool("thread mill", geometry={"DC": 10, "LCF": 15, "TP": 1.5, "NT": 1}))
+        self.assertEqual(d["kind"], "thread_mill")
+        self.assertNotIn("pitch_min", d)
+
+    def test_output_check_catches_damage(self):
+        self.assertEqual(verify([single_form()]), [])
+        for key, value in (("kind", "thread_mill"), ("pitch", 1.0), ("pitch_min", 0.8), ("flute_len", 2.0),
+                           ("shank_d", 2.0), ("shank_len", 30.0), ("tip_angle", 55.0), ("holder_len", 40.0)):
+            with self.subTest(key=key):
+                self.assertTrue(verify([single_form()], change=lambda d: d.update({key: value})))
+
+        def thin(d):  # the drawn shank narrower than Fusion's
+            d["body"]["spun"][1][1] = d["body"]["spun"][2][1] = 1.5
+        self.assertTrue(any("thinner" in p for p in verify([single_form()], change=thin)))
+
+    def test_default_speeds(self):
+        e = single_form(presets=[])
+        options = Options(default_vc=60, default_fz=0.02, kind_defaults={"thread_mill_single": {"rpm": 5000}})
+        d, _ = one(e, options)
+        self.assertEqual((d["rpm"], d["feed"]), (5000, 100))
+        self.assertEqual(verify([e], options), [])
+
+
+class CornerChamferTests(unittest.TestCase):
+    def test_45_degrees(self):
+        d, result = one(corner_chamfer())
+        self.assertEqual((d["kind"], d["corner_r"], d["diameter"]), ("bull_nose", 0.5, 10))
+        self.assertTrue(any("never smaller" in w for w in result.warnings))
+        self.assertEqual(verify([corner_chamfer()]), [])
+
+    def test_never_smaller_than_the_chamfer(self):
+        # for both readings of the angle the arc stays outside the face
+        for angle in (15, 30, 45, 60, 75):
+            e = corner_chamfer({"chamfer-angle": angle})
+            r, w, R = one(e)[0]["corner_r"], 0.5, 5.0
+            self.assertEqual(verify([e]), [])
+            for h in (w * math.tan(math.radians(angle)), w / math.tan(math.radians(angle))):
+                for i in range(101):
+                    z = h * i / 100
+                    face = R - w + w * z / h
+                    arc = R if z >= r else R - r + math.sqrt(max(r * r - (r - z) ** 2, 0))
+                    self.assertGreaterEqual(arc, face - 1e-5)
+
+    def test_inches(self):
+        e = corner_chamfer({"DC": 0.5, "LCF": 1, "LB": 2, "SFDM": 0.5, "chamfer-width": 0.02}, unit="inches")
+        self.assertAlmostEqual(one(e)[0]["corner_r"], 0.508)
+        self.assertEqual(verify([e]), [])
+
+    def test_without_chamfer_numbers_is_a_sharp_end_mill(self):
+        for geometry in ({"chamfer-width": 0}, {"chamfer-angle": None}, {"chamfer-angle": 90}):
+            e = corner_chamfer({"RE": 1, **geometry})
+            d, _ = one(e)
+            self.assertEqual((d["kind"], d["corner_r"]), ("end_mill", 0))
+            self.assertEqual(verify([e]), [])
+
+    def test_refusals(self):
+        self.assertIn("DCX", convert([corner_chamfer({"DCX": 11})]).skipped[0].reason)
+        self.assertIn("axis", convert([corner_chamfer({"chamfer-width": 5})]).skipped[0].reason)
+
+    def test_output_check_catches_damage(self):
+        self.assertTrue(verify([corner_chamfer()], change=lambda d: d.update(corner_r=1.0)))
+        self.assertTrue(verify([corner_chamfer()], change=lambda d: d.update(kind="ball_nose")))
+
+
 class ConvertTests(unittest.TestCase):
     def test_flat_end_mill_metric(self):
         d, _ = one(tool())
