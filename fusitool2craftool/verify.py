@@ -95,7 +95,7 @@ def compare(d: dict, entry: dict, options=None) -> list[str]:
         necks = [v for v in (f("SFDM"), f("shoulder-diameter")) if v]
         split = _undercut_neck(entry)
         if split:
-            # as wide as the head: the narrow start of the shaft (#27)
+            # as wide as the head, or a wider shaft: the narrow start of the shaft (#27, #43)
             necks, body_end = [2 * split[0]], split[1]
             check("shank_d", necks[0], "shaft segments")
         elif necks:
@@ -114,6 +114,10 @@ def compare(d: dict, entry: dict, options=None) -> list[str]:
                 top = (f("DC") - max(necks)) / 2 / math.tan(math.radians(ta))  # flank meets the neck
                 if flute > top:
                     flute, flute_key = top, "LCF capped where the flank meets the neck"
+    elif ftype != "form mill" and _undercut_neck(entry):
+        split = _undercut_neck(entry)
+        check("shank_d", 2 * split[0], "shoulder / shaft segments")
+        body_end = split[1]
     elif f("SFDM") and ftype != "form mill" and not (ftype == "thread mill" and flute is None):
         check("shank_d", f("SFDM"), "SFDM")
     if ftype == "form mill":
@@ -182,6 +186,7 @@ def compare(d: dict, entry: dict, options=None) -> list[str]:
             out.append(f"thread_hand is {d.get('thread_hand')!r}, Fusion type says {hand or 'right'}")
 
     out.extend(_holder_problems(d, entry, options))
+    out.extend(_body_problems(d, entry))
 
     number = (entry.get("post-process") or {}).get("number")
     if isinstance(number, (int, float)) and number > 0 and d.get("number") != int(number):
@@ -519,13 +524,10 @@ def _holder_segments(entry: dict) -> list[tuple[float, float, float]] | None:
     return out
 
 
-def _undercut_neck(entry: dict):
-    """(neck radius, neck end, rest) of an undercut cutter whose shank is as wide as its head (#27).
+def _body_line(entry: dict) -> list[tuple[float, float]]:
+    """Fusion's shoulder, shaft and shank from LCF to LB as (z, radius) points, or [].
 
-    Reads Fusion's body above the head as a line of (z, radius) points. The
-    neck's radius is the widest of its first 0.001 mm, and it ends at the
-    first point that is wider; the rest are (height, lower r, upper r) up to
-    the body's end. None where Fusion gives no narrower neck.
+    The shank above the shaft segments is at least as wide as they end.
     """
     g = entry.get("geometry") or {}
     unit = INCH if str(entry.get("unit", "")).lower() in ("inches", "inch", "in") else 1.0
@@ -533,27 +535,67 @@ def _undercut_neck(entry: dict):
     def f(key):
         return float(g[key]) * unit if _is_num(g.get(key)) else 0.0
 
-    if str(entry.get("type", "")).lower() not in ("slot mill", "lollipop mill", "dovetail mill"):
-        return None
-    lcf, head, shank, body = f("LCF"), f("DC"), f("SFDM"), f("LB") or f("OAL")
-    if not (lcf and head and shank and body) or max(shank, f("shoulder-diameter")) < head:
-        return None
-    line = [(lcf, 0.0)]
+    lcf, shank, body = f("LCF"), f("SFDM"), f("LB") or f("OAL")
+    if not (lcf and shank and body):
+        return []
+    segments = (entry.get("shaft") or {}).get("segments") or []
+    line: list[tuple[float, float]] = []
+    z = lcf
     if f("shoulder-length") > lcf + 1e-6:
-        line += [(lcf, f("shoulder-diameter") / 2), (f("shoulder-length"), f("shoulder-diameter") / 2)]
-    for seg in (entry.get("shaft") or {}).get("segments") or []:
+        z = f("shoulder-length")
+        undercut = str(entry.get("type", "")).lower() in ("slot mill", "lollipop mill", "dovetail mill")
+        first = segments[0].get("lower-diameter") if segments and not undercut else None
+        r = (f("shoulder-diameter") or max(shank, first * unit if _is_num(first) else 0.0)) / 2
+        line += [(lcf, r), (z, r)]
+    for seg in segments:
         try:
             h, lo, up = (float(seg[k]) * unit for k in ("height", "lower-diameter", "upper-diameter"))
         except (KeyError, TypeError, ValueError):
-            return None
-        z = line[-1][0]
+            return []
         line += [(z, lo / 2), (z + h, up / 2)]
-    z = line[-1][0]
-    if z > body + 1e-6 or any(r <= 0 for _, r in line[1:]):
-        return None
+        z += h
+    if any(r <= 0 for _, r in line):
+        return []
     if body - z > 1e-6:
-        line += [(z, shank / 2), (body, shank / 2)]
-    line = line[1:]
+        top = max(shank / 2, line[-1][1]) if segments else shank / 2
+        line += [(z, top), (body, top)]
+    out: list[tuple[float, float]] = []
+    for q in line:
+        if q[0] > body + 1e-9:  # the rest is in the holder
+            if out and out[-1][0] < body - 1e-9:
+                p = out[-1]
+                out.append((body, p[1] + (q[1] - p[1]) * (body - p[0]) / (q[0] - p[0])))
+            break
+        out.append(q)
+    return out
+
+
+def _undercut_neck(entry: dict):
+    """(neck radius, neck end, rest) where CamCraft's shank is not Fusion's whole body.
+
+    That is an undercut cutter whose shank is as wide as its head (#27), and
+    any tool whose body is wider somewhere than its plain shank (#43). The
+    neck's radius is the widest of the body's first 0.001 mm. It ends at the
+    first point that is wider, or where a collar (a neck wider than the plain
+    shank) changes at all. The rest are (height, lower r, upper r) up to the
+    body's end. None where one cylinder covers the body.
+    """
+    g = entry.get("geometry") or {}
+    unit = INCH if str(entry.get("unit", "")).lower() in ("inches", "inch", "in") else 1.0
+
+    def f(key):
+        return float(g[key]) * unit if _is_num(g.get(key)) else 0.0
+
+    ftype = str(entry.get("type", "")).lower()
+    if ftype.startswith("turning ") or ftype == "form mill" or (ftype == "thread mill" and not f("LCF")):
+        return None
+    undercut = ftype in ("slot mill", "lollipop mill", "dovetail mill")
+    line, lcf, head = _body_line(entry), f("LCF"), f("DC")
+    if not line or not head:
+        return None
+    plain = max(f("SFDM"), f("shoulder-diameter")) if undercut else f("SFDM")
+    if max(r for _, r in line) * 2 <= plain + 2e-3 and not (undercut and plain >= head):
+        return None
 
     def at(a, b, z):
         return a[1] if b[0] - a[0] < 1e-12 else a[1] + (b[1] - a[1]) * (z - a[0]) / (b[0] - a[0])
@@ -561,13 +603,44 @@ def _undercut_neck(entry: dict):
     stop = lcf + 0.001
     neck = max([r for z, r in line if z < stop - 1e-12]
                + [at(a, b, stop) for a, b in zip(line, line[1:]) if a[0] < stop - 1e-12 and b[0] >= stop])
+    collar = not undercut and 2 * neck > plain + 2e-3
     for i, (a, b) in enumerate(zip(line, line[1:])):
-        if b[1] > neck + 1e-9:
-            end = a[0] if b[0] - a[0] < 1e-12 else a[0] + (neck - a[1]) * (b[0] - a[0]) / (b[1] - a[1])
-            rest = [(end, neck)] + line[i + 1:]
+        if b[1] > neck + 1e-9 or (collar and b[0] >= stop and b[1] < neck - 1e-9):
+            if collar:
+                end = max(a[0], stop) if abs(a[1] - neck) < 1e-9 or a[0] < stop else a[0]
+            else:
+                end = a[0] if b[0] - a[0] < 1e-12 else a[0] + (neck - a[1]) * (b[0] - a[0]) / (b[1] - a[1])
+            rest = [(end, at(a, b, end) if collar else neck)] + line[i + 1:]
             segs = [(q[0] - p[0], p[1], q[1]) for p, q in zip(rest, rest[1:]) if q[0] - p[0] > 1e-12]
-            return (neck, end, segs) if 0 < neck < head / 2 else None
-    return None
+            return (neck, end, segs) if not undercut or 0 < neck < head / 2 else None
+    # one cylinder, wider than the plain shank
+    return None if undercut and 2 * neck <= plain + 2e-3 else (neck, line[-1][0], [])
+
+
+def _body_problems(d: dict, entry: dict) -> list[str]:
+    """Where the written shank, drawn body or holder cylinder is thinner than Fusion's body (#43)."""
+    ftype = str(entry.get("type", "")).lower()
+    line = _body_line(entry)
+    if not line or ftype == "form mill" or (ftype == "thread mill" and not (entry.get("geometry") or {}).get("LCF")):
+        return []
+    flute, top = d.get("flute_len") or 0.0, (d.get("flute_len") or 0.0) + (d.get("shank_len") or 0.0)
+    pts = (d.get("body") or {}).get("spun") if isinstance(d.get("body"), dict) else None
+
+    def written(z: float) -> float:
+        if z <= top:
+            return (d.get("shank_d") or 0.0) / 2
+        if not pts:
+            return (d.get("holder_d") or 0.0) / 2
+        return max([q[1] for q in pts if abs(q[0] - z) < 1e-6] + [
+            a[1] + (b[1] - a[1]) * (z - a[0]) / (b[0] - a[0]) for a, b in zip(pts, pts[1:]) if a[0] < z < b[0]] + [0.0])
+
+    for a, b in zip(line, line[1:]):
+        for i in range(1, 8):
+            z = a[0] + (b[0] - a[0]) * i / 8
+            want = a[1] + (b[1] - a[1]) * i / 8
+            if b[0] - a[0] > 0.03 and z > flute and written(z) < want - 2e-3:
+                return [f"the body is {2 * written(z):.4g} mm wide at {z:.4g} mm, Fusion's is {2 * want:.4g} mm"]
+    return []
 
 
 def _with_shank(segs, entry: dict, options):
@@ -587,6 +660,8 @@ def _with_shank(segs, entry: dict, options):
     split = _undercut_neck(entry)
     if split:
         under = split[2]
+        if not under:
+            return segs
     elif str(entry.get("type", "")).lower() != "thread mill" or f("LCF") or g.get("NT") != 1:
         return segs
     else:

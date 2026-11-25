@@ -473,6 +473,9 @@ def convert_tool(entry: dict, options: Options, presets_report: Counter | None =
         d["pitch_min"] = length("TPN") or lcf
         d["tip_angle"] = _num(g.get("thread-profile-angle")) or 60.0
 
+    if kind not in UNDERCUT and kind != "thread_mill_single" and ftype != "form mill":
+        below = _wide_shank(d, entry, length, body)
+
     if options.default_holder and not _has_holder(entry):
         entry = {**entry, "holder": options.default_holder}
         warnings.append(f"no holder in Fusion: default holder '{holder_name(options.default_holder)}' used")
@@ -811,7 +814,9 @@ def _shaft_above(entry: dict, length, body: float | None) -> list[tuple[float, f
 
     As (height, lower, upper diameter) in mm, or nothing if Fusion does not
     state all of it. Vendors that print the neck length in the tool's name
-    print the first shaft segment's height (#27).
+    print the first shaft segment's height (#27). What reaches past the body's
+    end is in the holder. Above the segments the shank is never narrower than
+    they end: some tools state their neck as ``SFDM`` (#43).
     """
     lcf, shank = length("LCF"), length("SFDM")
     shoulder, shoulder_d = length("shoulder-length") or 0.0, length("shoulder-diameter")
@@ -819,23 +824,60 @@ def _shaft_above(entry: dict, length, body: float | None) -> list[tuple[float, f
         return []
     scale = _unit_scale(entry.get("unit"))
     out, z = [], lcf
+    shaft = entry.get("shaft")
     if shoulder > lcf + 1e-6:
         if not shoulder_d:
-            return []
+            # unstated: the shaft's first segment starts as wide as the shoulder
+            # ends. An undercut cutter states its neck as the shank.
+            first = ((shaft.get("segments") if isinstance(shaft, dict) else None) or [{}])[0]
+            undercut = KINDS.get(str(entry.get("type", "")).strip().lower()) in UNDERCUT
+            shoulder_d = shank if undercut else max(shank, (_num(first.get("lower-diameter")) or 0.0) * scale)
         out.append((shoulder - lcf, shoulder_d, shoulder_d))
         z = shoulder
-    shaft = entry.get("shaft")
     for seg in (shaft.get("segments") if isinstance(shaft, dict) else None) or []:
         h, lo, up = (_num(seg.get(k)) for k in ("height", "lower-diameter", "upper-diameter"))
         if h is None or h < 0 or not lo or not up or min(lo, up) <= 0:
             return []
         out.append((h * scale, lo * scale, up * scale))
         z += h * scale
-    if z > body + 1e-6:
-        return []
     if body - z > 1e-6:
-        out.append((body - z, shank, shank))
+        top = max(shank, out[-1][2]) if isinstance(shaft, dict) and shaft.get("segments") and out else shank
+        out.append((body - z, top, top))
+    while out and z - body > 1e-9:
+        h, lo, up = out.pop()
+        z -= h
+        if z < body - 1e-9:
+            out.append((body - z, lo, lo + (up - lo) * (body - z) / h))
+            z = body
     return out
+
+
+def _wide_shank(d: dict, entry: dict, length, body: float | None) -> list[tuple[float, float, float]]:
+    """Narrow ``d``'s shank where Fusion's body is wider than that one cylinder (#43).
+
+    Returns the body above it, to be drawn under the holder, or nothing when
+    the cylinder covers all of Fusion's shoulder and shaft.
+    """
+    shaft, plain, lcf = _shaft_above(entry, length, body), d["shank_d"], length("LCF")
+    if not shaft or max(max(lo, up) for _, lo, up in shaft) <= plain + WIDER:
+        return []
+    neck, reach, rest = _split_neck(shaft)
+    if neck > plain + WIDER:
+        # a collar (a face mill's body): straight as far as it keeps its width
+        reach, rest = 0.0, list(shaft)
+        while rest and max(abs(rest[0][1] - neck), abs(rest[0][2] - neck)) < 1e-9:
+            reach += rest.pop(0)[0]
+        if reach < MIN_NECK:
+            h, lo, up = rest[0]
+            cut = MIN_NECK - reach
+            if h > cut:
+                rest[0] = (h - cut, lo + (up - lo) * cut / h, up)
+            else:
+                rest.pop(0)
+                cut = h
+            reach += cut
+    d["shank_d"], d["shank_len"] = neck, lcf + reach - d["flute_len"]
+    return rest
 
 
 def _split_neck(shaft: list[tuple[float, float, float]]) -> tuple[float, float, list[tuple[float, float, float]]]:
@@ -872,8 +914,8 @@ def _undercut(d: dict, entry: dict, length, body: float | None,
     diameters, which can only shorten the reach CamCraft allows, never let
     the body pass where it would hit.
 
-    Where that is as wide as the head, the neck is the narrow start of
-    Fusion's shaft (#27). Returns the rest of the shaft, which then has to
+    Where that is as wide as the head, or Fusion's shaft gets wider than it
+    (#43), the neck is the narrow start of Fusion's shaft (#27). Returns the rest of the shaft, which then has to
     be drawn under the holder: CamCraft judges it there.
     """
     above: list[tuple[float, float, float]] = []
@@ -881,10 +923,11 @@ def _undercut(d: dict, entry: dict, length, body: float | None,
     if not necks:
         raise ToolRefused("no neck diameter (SFDM / shoulder-diameter)")
     d["shank_d"] = max(necks)
-    if d["shank_d"] >= d["diameter"]:
-        shaft = _shaft_above(entry, length, body)
+    shaft = _shaft_above(entry, length, body)
+    wide = bool(shaft) and max(max(lo, up) for _, lo, up in shaft) > d["shank_d"] + WIDER
+    if d["shank_d"] >= d["diameter"] or wide:
         neck, reach, rest = _split_neck(shaft)
-        if rest and 0 < neck < d["diameter"]:
+        if wide or (rest and 0 < neck < d["diameter"]):
             d["shank_d"], body, above = neck, d["flute_len"] + reach, rest
     desc = str(entry.get("description", "")).lower()
     if d["kind"] == "t_slot" and ("keyseat" in desc or "woodruff" in desc):
@@ -1015,6 +1058,7 @@ def _clean_text(v, limit: int) -> str | None:
 SPUN_MAX_POINTS = 64
 SPUN_MIN_SEGMENT = 0.01      # mm; we merge below twice that, rounding-safe
 MIN_NECK = 0.001             # mm; CamCraft needs a neck length over 0
+WIDER = 2e-3                 # mm; a body this much wider than the shank is drawn (#43)
 SPUN_MAX_HEIGHT = 2000.0     # MAX_BODY_HEIGHT
 SPUN_MAX_RADIUS = 500.0      # MAX_BODY_RADIUS
 SPUN_SOURCE = "drawn profile"
