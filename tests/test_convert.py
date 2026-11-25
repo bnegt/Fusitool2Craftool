@@ -662,6 +662,68 @@ def saw(geometry=None, **extra):
                           "shoulder-diameter": 0.375, "shoulder-length": 0.0625, **(geometry or {})}, **extra)
 
 
+class PlaceholderSpeedTests(unittest.TestCase):
+    """#35: a vendor's preset of 1 rpm and feed 1 states no speeds."""
+
+    ONE = {"name": "Default Preset", "n": 1, "v_f": 1, "v_f_plunge": 1, "n_ramp": 1, "f_n": 1, "v_c": 0.008}
+    DEFAULTS = Options(default_rpm=9000, default_feed=600)
+
+    def verifies(self, result):
+        with tempfile.TemporaryDirectory() as tmp:
+            return verify_file(camtools.write(result, Path(tmp) / "out.camtools"), result)
+
+    def test_skipped_without_defaults(self):
+        for unit in ("inches", "millimeters"):
+            result = convert([tool(unit=unit, presets=[self.ONE])])
+            self.assertEqual(result.tools, [])
+            self.assertIn("only a placeholder spindle speed", result.skipped[0].reason)
+
+    def test_takes_the_defaults(self):
+        d, result = one(tool(unit="inches", presets=[self.ONE]), self.DEFAULTS)
+        self.assertEqual((d["rpm"], d["feed"]), (9000, 600))
+        self.assertTrue(any("only a placeholder spindle speed" in w for w in result.warnings))
+        self.assertEqual(self.verifies(result), [])
+
+    def test_every_kind_takes_the_defaults(self):
+        for type_, g, feed in (("drill", {"SIG": 118}, 600), ("spot drill", {"SIG": 60}, 600), ("chamfer mill", {"TA": 45}, 600),
+                               ("tap right hand", {"DC": 8, "TP": 1.25}, 9000 * 1.25)):
+            for preset in (self.ONE, {**self.ONE, "v_f": None}, {**self.ONE, "v_f": 0}):
+                d, result = one(tool(type_, geometry=g, presets=[preset]), self.DEFAULTS)
+                self.assertEqual((d["rpm"], d["feed"]), (9000, feed), type_)
+                self.assertEqual(self.verifies(result), [])
+
+    def test_a_real_preset_is_preferred(self):
+        real = {"name": "Steel", "n": 4000, "v_f": 300}
+        d, result = one(tool(presets=[self.ONE, real]))
+        self.assertEqual((d["rpm"], d["feed"]), (4000, 300))
+        self.assertEqual(self.verifies(result), [])
+        d, result = one(tool(presets=[self.ONE, real]), Options(preset="default preset", default_rpm=9000, default_feed=600))
+        self.assertEqual((d["rpm"], d["feed"]), (9000, 600))
+        self.assertEqual(self.verifies(result), [])
+
+    def test_a_drag_engraver_keeps_its_one_rpm(self):
+        d, result = one(tool("chamfer mill", unit="inches", geometry={"TA": 45},
+                             presets=[{"name": "Engraving Preset", "n": 1, "v_f": 100, "v_f_plunge": 25}]))
+        self.assertEqual((d["rpm"], d["feed"]), (1, 2540))
+        self.assertEqual(self.verifies(result), [])
+
+    def test_feed_of_one_at_a_real_speed_is_kept(self):
+        d, _ = one(tool(presets=[{"name": "P", "n": 8000, "v_f": 1}]))
+        self.assertEqual((d["rpm"], d["feed"]), (8000, 1))
+
+    def test_no_material_row(self):
+        result = convert([tool(presets=[{"name": "Steel", "n": 4000, "v_f": 300}, {**self.ONE, "name": "6061 aluminum"}])],
+                         Options(all_presets=True))
+        rows = result.tools[0]["definition"].get("cutting_data", [])
+        self.assertNotIn(1, [r["rpm"] for r in rows])
+        self.assertIn(("6061 aluminum", "no speeds"), result.presets)
+
+    def test_output_check_refuses_the_placeholder(self):
+        d, result = one(tool(unit="inches", presets=[self.ONE]), self.DEFAULTS)
+        d.update(rpm=1.0, feed=25.4)
+        self.assertTrue(any("match no Fusion preset" in p for p in self.verifies(result)))
+
+
 class SharpDrillAndSawTests(unittest.TestCase):
     """#31: points of 60 degrees or less, and saws without a shank."""
 

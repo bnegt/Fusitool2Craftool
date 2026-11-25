@@ -1155,6 +1155,15 @@ def presets_of(entry: dict) -> list[dict]:
     return presets
 
 
+def is_placeholder(preset: dict) -> bool:
+    """Speeds a vendor left at 1 (#35): 1 rpm, and no feed other than 1.
+
+    1 rpm with a real feed is not one: a drag engraver does not spin.
+    """
+    return _num(preset.get("n")) == 1 and all(
+        _num(preset.get(k)) in (None, 0, 1) for k in ("v_f", "v_f_plunge"))
+
+
 def _pick_preset(entry: dict, options: Options) -> dict | None:
     presets = presets_of(entry)
     if not presets:
@@ -1164,7 +1173,7 @@ def _pick_preset(entry: dict, options: Options) -> dict | None:
         for p in presets:
             if str(p.get("name", "")).strip().lower() == want:
                 return p
-    return presets[0]
+    return next((p for p in presets if not is_placeholder(p)), presets[0])
 
 
 def preset_feed(preset: dict, kind: str, pitch: float, unit: float) -> tuple[float | None, str]:
@@ -1249,8 +1258,10 @@ def _speeds(entry: dict, options: Options, unit: float, warnings: list[str],
             flutes: int | None = None, report: Counter | None = None):
     report = report if report is not None else Counter()
     preset = _pick_preset(entry, options)
-    rpm = _num(preset.get("n")) if preset else None
-    feed, source = preset_feed(preset, kind, pitch, unit) if preset else (None, "")
+    stated = preset is not None and not is_placeholder(preset)
+    rpm = _num(preset.get("n")) if stated else None
+    feed, source = preset_feed(preset, kind, pitch, unit) if stated else (None, "")
+    none = "no" if stated or preset is None else "only a placeholder"
     if source and source != "v_f":
         warnings.append(f"feed {feed:g} mm/min taken from Fusion's {source} (the preset has no v_f)")
     if preset and options.preset and str(preset.get("name", "")).strip().lower() != options.preset.strip().lower():
@@ -1258,20 +1269,20 @@ def _speeds(entry: dict, options: Options, unit: float, warnings: list[str],
     if not rpm or rpm <= 0:
         rpm, how = default_rpm(options, kind, diameter)
         if rpm is None:
-            raise ToolRefused("no spindle speed in Fusion (give --default-rpm or --default-vc)")
-        warnings.append(f"no spindle speed in Fusion: {rpm:.6g} rpm from {how}")
+            raise ToolRefused(f"{none} spindle speed in Fusion (give --default-rpm or --default-vc)")
+        warnings.append(f"{none} spindle speed in Fusion: {rpm:.6g} rpm from {how}")
         report[f"rpm from {_how_key(how)}"] += 1
     if not feed or feed <= 0:
         if kind == "tap" and pitch > 0:
             feed = rpm * pitch
-            warnings.append(f"no feed in Fusion: tap feed {feed:g} mm/min = rpm x pitch")
+            warnings.append(f"{none} feed in Fusion: tap feed {feed:g} mm/min = rpm x pitch")
         else:
             feed, how = default_feed(options, kind, rpm, flutes)
             if feed is None:
                 why = " and no flute count for --default-fz" if not flutes and (
                     options.default_fz or options.kind_defaults.get(kind, {}).get("fz")) else ""
-                raise ToolRefused(f"no cutting feed in Fusion{why} (give --default-feed or --default-fz)")
-            warnings.append(f"no cutting feed in Fusion: {feed:.6g} mm/min from {how}")
+                raise ToolRefused(f"{none} cutting feed in Fusion{why} (give --default-feed or --default-fz)")
+            warnings.append(f"{none} cutting feed in Fusion: {feed:.6g} mm/min from {how}")
             report[f"feed from {_how_key(how)}"] += 1
     return rpm, feed, preset
 
@@ -1322,7 +1333,7 @@ def _preset_rows(entry: dict, chosen: dict | None, options: Options, rows: list[
             continue
         rpm = _num(p.get("n"))
         feed, _ = preset_feed(p, kind, pitch, unit)
-        if not (rpm and rpm > 0 and feed and feed > 0):
+        if is_placeholder(p) or not (rpm and rpm > 0 and feed and feed > 0):
             report[(name, "no speeds")] += 1
             continue
         taken.add(material)

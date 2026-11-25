@@ -383,6 +383,8 @@ def _matching_preset(entry: dict, d: dict, options=None) -> dict | None:
     flutes = int(nof) if _is_num(nof) and float(nof).is_integer() and nof >= 1 else None  # teeth, uncapped
     presets = presets_of(entry) or ([{}] if options is not None else [])
     for p in presets:
+        if p.get("n") == 1 and not {p.get("v_f"), p.get("v_f_plunge")} - {None, 0, 1}:
+            p = {}  # a vendor's placeholder states no speeds (#35)
         n = p.get("n") if _is_num(p.get("n")) and p.get("n") > 0 else None
         if n is not None:
             if not math.isclose(rpm, n, abs_tol=TOL):
