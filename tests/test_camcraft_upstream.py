@@ -2,8 +2,9 @@
 
 Runs first in the suite (alphabetical order). It asks GitHub whether the
 CamCraft issues that block the tool types we skip (tapered, roundover,
-reamer, counterbore) are still open, and whether CamCraft's tool kinds changed. When one fails, CamCraft
-may now support tools we skip: see
+reamer, counterbore, corner radius dovetail) are still open, and whether
+CamCraft's tool kinds changed. When one fails, CamCraft may now support tools
+we skip: see
 https://github.com/bnegt/Fusitool2Craftool/issues/1
 
 Needs network access; skipped when offline, when GitHub rate-limits, or with
@@ -26,6 +27,7 @@ BLOCKING_ISSUES = {
     896: "roundover bits (and other form cutters)",
     897: "reamers and counterbores (no CamCraft kind)",
     3368: "tapered mills (tip form: sharp, flat, ball)",
+    4004: "dovetail mills with a corner radius (our #29)",
 }
 
 # #14: stand-alone Fusion holders wait for a user holder library in a
@@ -38,7 +40,12 @@ HOLDER_TRACKING = "https://github.com/bnegt/Fusitool2Craftool/issues/14"
 RELEASED_CAMTOOLS_VERSION = 4  # v0.26.0: VERSION 1 .. HOLDER_REF_VERSION 4
 
 # A closed issue counts once the latest release's source holds its marker.
-RELEASE_MARKERS = {3368: ("crates/app/src/tool_library.rs", "TIP_FORM_VERSION")}
+# For #4004 that is a guess at how the fix will read the field: today the file
+# only writes ``corner_r: 0.0``. If it closes and the skip stays, look.
+RELEASE_MARKERS = {
+    3368: ("crates/app/src/tool_library.rs", "TIP_FORM_VERSION"),
+    4004: ("crates/tools/src/undercut.rs", "tool.corner_r"),
+}
 
 # CamCraft's ToolKind variants as of v0.26.0.
 KNOWN_KINDS = {
