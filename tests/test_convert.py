@@ -962,6 +962,118 @@ class TaperedMillTests(unittest.TestCase):
         self.assertEqual(result.version, 1)
 
 
+def multi_form(geometry=None, pitch=0.8, rows=10, dc=3.9, height=0.6, flank=30.0, neck=6.0, shape=None, **extra):
+    """A multi-form thread mill stored as a form mill (#37): teeth, a neck, a cone to a 6 mm shank."""
+    root, rise = dc / 2 - height * pitch, height * pitch * math.tan(math.radians(flank))
+    line = [(0, 0), (root, 0)]
+    for i in range(rows):
+        z = i * pitch
+        line += [(dc / 2, z + rise), (dc / 2, z + rise + 0.1 * pitch), (root, z + 2 * rise + 0.1 * pitch), (root, z + pitch)]
+    top = rows * pitch
+    line += [(root, top + neck), (3, top + neck + 3), (3, 60), (0, 60)]
+    if shape:
+        line = shape(line)
+    return tool("form mill", description=extra.pop("description", "MULTI-FORM M5-0.80 THREAD MILL"),
+                geometry={"DC": dc, "LCF": top, "LB": top + neck + 10, "OAL": 60, "SFDM": 6, "NOF": 3, "HAND": True, "TP": 0,
+                          "profile": [{"end": list(q)} for q in line], **(geometry or {})}, **extra)
+
+
+class FormThreadMillTests(unittest.TestCase):
+    """#37: multi-form thread mills that vendors store as form mills."""
+
+    def verifies(self, result):
+        with tempfile.TemporaryDirectory() as tmp:
+            return verify_file(camtools.write(result, Path(tmp) / "out.camtools"), result)
+
+    def reason(self, entry):
+        result = convert([entry])
+        self.assertEqual(result.tools, [])
+        return result.skipped[0].reason
+
+    def test_thread_mill_from_its_outline(self):
+        d, result = one(multi_form())
+        self.assertEqual((d["kind"], d["diameter"], d["pitch"], d["tip_angle"], d["flute_len"]), ("thread_mill", 3.9, 0.8, 60, 8))
+        self.assertAlmostEqual(d["shank_d"], 3.9 - 1.2 * 0.8)
+        self.assertAlmostEqual(d["shank_len"], 6)
+        outline = [[round(v, 4) for v in q] for q in d["body"]["spun"]]
+        # neck end, cone to the 6 mm shank, shank up to LB, default holder (50 x 40)
+        self.assertEqual(outline[1:5], [[14, 1.47, 0], [17, 3, 0], [24, 3, 0], [24, 25, 0]])
+        self.assertTrue(any("0.8 mm pitch read" in w for w in result.warnings))
+        self.assertEqual(self.verifies(result), [])
+
+    def test_pitch_is_the_standard_one(self):
+        # CamCraft compares pitches to 1e-6 mm; Fusion's outlines are rounded (0.500126 for 0.5)
+        for drawn, pitch in ((0.500126, 0.5), (1.2698, 25.4 / 20), (25.4 / 11.5, 25.4 / 11.5), (0.79375, 25.4 / 32), (0.8001, 0.8)):
+            d, result = one(multi_form(pitch=drawn, dc=12))
+            self.assertAlmostEqual(d["pitch"], pitch, places=6)
+            self.assertEqual(self.verifies(result), [])
+
+    def test_inch_outline(self):
+        e = multi_form(pitch=0.05, rows=15, dc=0.195, neck=0.1, unit="inches")
+        d, result = one(e)
+        self.assertAlmostEqual(d["pitch"], 1.27)
+        self.assertAlmostEqual(d["flute_len"], 19.05)
+        self.assertEqual(self.verifies(result), [])
+
+    def test_last_tooth_past_the_flutes_is_cut_edge(self):
+        d, result = one(multi_form({"LCF": 7.75}))
+        self.assertGreater(d["flute_len"], 7.75)
+        self.assertEqual(self.verifies(result), [])
+
+    def test_shank_right_above_the_teeth(self):
+        d, result = one(multi_form(neck=0.0))
+        self.assertLessEqual(d["shank_len"], 0.001)
+        self.assertEqual(self.verifies(result), [])
+
+    def test_holder_stands_on_the_shank(self):
+        h = {"unit": "millimeters", "segments": [{"height": 20, "lower-diameter": 20, "upper-diameter": 30}]}
+        d, result = one(multi_form(holder=h))
+        self.assertEqual(d["holder_d"], 30)
+        self.assertAlmostEqual(d["holder_len"], 30)  # 10 mm of cone and shank, 20 of holder
+        self.assertEqual(self.verifies(result), [])
+
+    def test_cylinders(self):
+        d, result = one(multi_form(), Options(holder_bodies=False))
+        self.assertNotIn("body", d)
+        self.assertEqual(self.verifies(result), [])
+
+    def test_refused(self):
+        taper = lambda line: [(r + (0.03 * z if 0 < z < 8 else 0), z) for r, z in line]  # noqa: E731
+        uneven = lambda line: [(r, z + (0.05 if 4 < z < 4.7 else 0)) for r, z in line]  # noqa: E731
+        back = lambda line: line[:-3] + [(2, 5), (3, 20)] + line[-2:]  # noqa: E731
+        for entry, why in ((multi_form({"HAND": False}), "left-hand"), (multi_form(rows=1), "one row"),
+                           (multi_form(shape=taper), "not all on its diameter"), (multi_form(shape=uneven), "evenly"),
+                           (multi_form(height=0.45), "high teeth"), (multi_form(flank=27.5), "60 degree"),
+                           (multi_form(pitch=0.77), "no standard one"), (multi_form(shape=back), "runs back"),
+                           (multi_form({"profile": []}), "without an outline"), (multi_form({"LB": 80}), "does not reach")):
+            self.assertIn(why, self.reason(entry))
+
+    def test_arcs(self):
+        def arc(ccw, center):
+            e = multi_form()
+            p = e["geometry"]["profile"]
+            p[-3].update(arc=True, ccw=ccw, center=center)  # the neck (1.47, 14) to the shank (3, 17)
+            return e
+        # a fillet around a point outside the cutter lies inside its chord
+        d, result = one(arc(False, [1.47 + 3.706, 14]))
+        self.assertAlmostEqual(d["shank_len"], 6)
+        self.assertEqual(self.verifies(result), [])
+        for ccw, center in ((True, [-0.706, 17]), (True, [5.176, 14]), (False, [-0.706, 17])):
+            self.assertIn("bulging arc", self.reason(arc(ccw, center)))
+
+    def test_other_form_mills_are_still_skipped(self):
+        for name in ("CORNER ROUNDING END MILL", "SPIRAL REAMER"):
+            result = convert([multi_form(description=name)])
+            self.assertEqual(result.skipped[0].category, "form mill")
+
+    def test_output_check_reads_the_outline(self):
+        for change in ({"pitch": 0.75}, {"flute_len": 6.0}, {"shank_d": 2.0}, {"diameter": 3.0}, {"tip_angle": 55.0},
+                       {"kind": "thread_mill_single"}, {"shank_len": 9.0}):
+            d, result = one(multi_form())
+            d.update(change)
+            self.assertTrue(self.verifies(result), change)
+
+
 class LeftHandTests(unittest.TestCase):
     """#38: CamCraft turns every mill and drill forward."""
 

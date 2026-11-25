@@ -28,7 +28,7 @@ from fusitool2craftool.convert import Options, convert
 from fusitool2craftool.fusion import load_library
 from fusitool2craftool.push import PROTOCOL_VERSION, PushError, _close, _content_text, _Session, push
 
-from .test_convert import ARBOR, DEFAULT_SPEEDS, FIXTURES, PRIVATE, corner_chamfer, holder, keyseat, saw, single_form, tapered, tool
+from .test_convert import ARBOR, DEFAULT_SPEEDS, FIXTURES, PRIVATE, corner_chamfer, holder, keyseat, multi_form, saw, single_form, tapered, tool
 from .test_lathe import TYPES, lathe
 
 CLI = os.environ.get("CAMCRAFT_CLI") or shutil.which("camcraft-cli")
@@ -57,6 +57,7 @@ def edge_cases() -> list[dict]:
         tool(description="spot drill 60", type_="spot drill", unit="inches",
              geometry={"DC": 0.125, "LCF": 0.375, "LB": 0.92, "SFDM": 0.125, "SIG": 60},
              presets=[{"name": "P", "n": 4000, "v_f_plunge": 8}]),
+        multi_form(description="M5-0.80 THREAD MILL"),
         saw(description="saw without an arbor"),
         saw(description="saw on its arbor", holder=ARBOR),
         tool(description="tap M8 left", type_="tap left hand", geometry={"DC": 8, "TP": 1.25},
@@ -252,16 +253,17 @@ def plate_with_hole(path: Path, hole: float, depth: float, size: float = 30.0, n
 
 @unittest.skipUnless(CLI, "camcraft-cli not found (set CAMCRAFT_CLI)")
 class ThreadMillingLiveTests(unittest.TestCase):
-    """#16: CamCraft threads an M5 hole with a converted single-form mill."""
+    """#16, #37: CamCraft threads an M5 hole with a converted thread mill."""
 
-    def verify_thread(self, depth: float, change=None) -> dict:
+    def verify_thread(self, depth: float, change=None, mill=None) -> dict:
         """Drill and thread an M5x0.8 hole; CamCraft's verify of the thread."""
+        mill = mill or single_form()  # D3.9 under a 4 mm shank, reach 16
         result = convert([
-            single_form(description="TM"),  # D3.9 under a 4 mm shank, reach 16
+            {**mill, "description": "THREAD MILL"},
             tool("drill", description="D", geometry={"DC": 4.2, "SFDM": 4.2, "LCF": 50, "LB": 60, "SIG": 118})])
         self.assertEqual(result.skipped, [])
         if change:
-            change(next(t for t in result.tools if t["name"] == "TM")["definition"])
+            change(next(t for t in result.tools if t["name"] == "THREAD MILL")["definition"])
         with tempfile.TemporaryDirectory() as tmp, camcraft() as call:
             library = camtools.write(result, Path(tmp) / "lib.camtools")
             plate_with_hole(Path(tmp) / "part.stl", 4.2, depth)
@@ -269,7 +271,7 @@ class ThreadMillingLiveTests(unittest.TestCase):
             call("import_model", path=str(Path(tmp) / "part.stl"), name="part")
             call("set_stock", box={"dx": 30, "dy": 30, "dz": depth})
             call("import_tool_library", path=str(library), mode="add", format="camtools")
-            for kind, name, mill, params in (("drill", "Dr", "D", {}), ("thread", "T", "TM", {"pitch": 0.8})):
+            for kind, name, mill, params in (("drill", "Dr", "D", {}), ("thread", "T", "THREAD MILL", {"pitch": 0.8})):
                 call("add_operation", kind=kind, name=name, tool=mill, source="part", params=params)
                 self.assertEqual(json.loads(call("detect_holes", name=name))["holes"], 1)
                 call("generate", name=name)
@@ -287,6 +289,13 @@ class ThreadMillingLiveTests(unittest.TestCase):
 
     def test_deeper_than_the_reach_is_held(self):
         self.assert_shank_hit(self.verify_thread(20))
+
+    def test_multi_form_stored_as_a_form_mill(self):
+        # 8 mm of teeth on a 6 mm neck, then a cone to a 6 mm shank
+        report = self.verify_thread(13, mill=multi_form())
+        self.assertEqual(report["findings"], [])
+        self.assertTrue(report["ok"], report)
+        self.assert_shank_hit(self.verify_thread(20, mill=multi_form()))
 
     def test_plain_shank_is_held(self):
         # why the neck is written: the 4 mm shank right above the tooth hits
