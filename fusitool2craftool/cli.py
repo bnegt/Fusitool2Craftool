@@ -62,6 +62,10 @@ def build_parser() -> argparse.ArgumentParser:
     conv.add_argument("--unreleased-materials", action="store_true",
                       help="allow material words CamCraft has only after its latest release "
                       f"(now: {', '.join(UNRELEASED_MATERIALS) or 'none'})")
+    conv.add_argument("--unreleased-tapers", action="store_true",
+                      help="write tapered mills with their flat or ball tip, for a CamCraft build newer than "
+                      "0.26.0: the latest release refuses the whole file, and no CamCraft operation "
+                      "cuts with such a tip yet")
     conv.add_argument("--all-presets", action="store_true",
                       help="also write one cutting data row per Fusion preset whose name names a "
                       "CamCraft material (e.g. '6061 aluminum', '4140 steel', 'acetal'); "
@@ -136,6 +140,7 @@ def main(argv: list[str] | None = None) -> int:
         holder_len=args.holder_len,
         all_presets=args.all_presets,
         unreleased_materials=args.unreleased_materials,
+        unreleased_tapers=args.unreleased_tapers,
     )
     try:
         convert([], options)  # checks --material against the CamCraft it is for
@@ -276,6 +281,11 @@ def convert_file(src: Path, output: Path, args, options: Options, quiet_empty: b
     written = camtools.write(result, output)
     print(f"wrote {len(result.tools)} tool(s) to {written}"
           + (f" ({len(result.skipped)} skipped)" if result.skipped else ""))
+
+    tapers = sum("tip_form" in t["definition"] for t in result.tools)
+    if tapers:
+        print(f"warning: {tapers} {plural('tapered mill', tapers)} in {written.name}: CamCraft 0.26.0 refuses the whole "
+              f"file, and newer builds import them but no operation cuts with a flat or ball tip yet", file=sys.stderr)
 
     problems = verify_file(written, result)
     if problems:

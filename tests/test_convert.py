@@ -1,3 +1,4 @@
+import dataclasses
 import io
 import math
 import json
@@ -739,6 +740,138 @@ class SharpDrillAndSawTests(unittest.TestCase):
         self.assertTrue(any("shank_len" in p for p in self.verifies(result)))
 
 
+def tapered(geometry=None, **extra):
+    """A 3 degree a side tapered mill with a 2 mm tip (#10)."""
+    return tool("tapered mill", description=extra.pop("description", "tapered mill"),
+                geometry={"DC": 2, "LCF": 20, "LB": 40, "OAL": 60, "SFDM": 6, "TA": 3, "RE": 0, **(geometry or {})}, **extra)
+
+
+TAPERS = Options(unreleased_tapers=True)
+
+
+class TaperedMillTests(unittest.TestCase):
+    """#10: tapered mills, for a CamCraft newer than 0.26.0."""
+
+    def verifies(self, result):
+        with tempfile.TemporaryDirectory() as tmp:
+            return verify_file(camtools.write(result, Path(tmp) / "out.camtools"), result)
+
+    @staticmethod
+    def tangent(angle):
+        """The tip radius of a cone tangent to a 1 mm ball."""
+        return (1 - math.sin(math.radians(angle))) / math.cos(math.radians(angle))
+
+    def test_needs_the_flag(self):
+        result = convert([tapered(), tapered({"RE": 1})])
+        self.assertEqual([s.category for s in result.skipped], ["tapered mill", "tapered ball mill"])
+        self.assertIn("--unreleased-tapers", result.skipped[0].reason)
+
+    def test_flat_tip(self):
+        d, result = one(tapered(), TAPERS)
+        self.assertEqual((d["kind"], d["tip_form"], d["tip_diameter"], d["corner_r"], d["tip_angle"]),
+                         ("taper", "flat", 2, 0, 6))
+        self.assertAlmostEqual(d["diameter"], 2 + 40 * math.tan(math.radians(3)), places=5)
+        self.assertEqual((d["flute_len"], d["shank_d"], d["shank_len"]), (20, 6, 20))
+        self.assertEqual(result.version, 6)
+        self.assertEqual(self.verifies(result), [])
+
+    def test_rounded_flat_tip(self):
+        d, result = one(tapered({"RE": 0.3}), TAPERS)
+        self.assertEqual((d["tip_form"], d["tip_diameter"], d["corner_r"]), ("flat", 2, 0.3))
+        self.assertEqual(self.verifies(result), [])
+
+    def test_ball_tip_tangent_to_the_cone(self):
+        # Harvey 32630: DC 0.02749" is the cone at the tip of an R 0.015" ball
+        d, result = one(tapered({"DC": 0.02749, "RE": 0.015, "TA": 5, "LCF": 0.3, "LB": 0.48686, "OAL": 3,
+                                 "SFDM": 0.1875}, unit="inches"), TAPERS)
+        self.assertEqual((d["tip_form"], d["corner_r"], d["tip_angle"]), ("ball", 0.381, 10))
+        self.assertNotIn("tip_diameter", d)
+        self.assertAlmostEqual(d["diameter"], 0.0799831981155544 * 25.4, places=3)  # Fusion's own shoulder-diameter
+        self.assertEqual(self.verifies(result), [])
+
+    def test_ball_by_name_keeps_fusions_flank(self):
+        # RE = DC/2: Fusion's cone starts at the full radius, so a sliver stays flat
+        d, result = one(tapered({"RE": 1}), TAPERS)
+        self.assertEqual((d["tip_form"], d["tip_diameter"], d["corner_r"]), ("flat", 2, 1))
+        self.assertTrue(any("tapered ball" in w for w in result.warnings))
+        self.assertEqual(self.verifies(result), [])
+
+    def test_ball_larger_than_its_tip(self):
+        d, result = one(tapered({"DC": 0.0025, "RE": 0.0254, "TA": 30, "LCF": 6.35}), TAPERS)
+        self.assertEqual((d["tip_form"], d["corner_r"]), ("ball", 0.0254))
+        self.assertTrue(any("too large" in w for w in result.warnings))
+        self.assertEqual(self.verifies(result), [])
+
+    def test_never_thinner_than_fusion(self):
+        for geometry in ({}, {"RE": 0.3}, {"RE": 0.9}, {"RE": 1}, {"RE": 1 / self.tangent(3)}, {"TA": 45, "RE": 0.4},
+                         {"DC": 2 * self.tangent(20), "TA": 20, "RE": 1}):
+            e = tapered(geometry)
+            d, _ = one(e, TAPERS)
+            g = e["geometry"]
+            half = math.radians(d["tip_angle"] / 2)
+            cr = d["corner_r"]
+            r0 = d["tip_diameter"] / 2 if d["tip_form"] == "flat" else cr * math.tan(math.pi / 4 - half / 2)
+            for i in range(1, 200):
+                z = 20 * i / 200
+                # both outlines have the same fillet, so it is the cone that counts
+                self.assertGreaterEqual(min(r0 + z * math.tan(half), d["diameter"] / 2),
+                                        g["DC"] / 2 + z * math.tan(math.radians(g["TA"])) - 1e-5, geometry)
+            self.assertIsNone(why_not_sane(d))
+
+    def test_camcraft_rules(self):
+        d, _ = one(tapered({"RE": 0.3}), TAPERS)
+        for change, why in (({"tip_diameter": 0.0}, "flat tip's diameter"), ({"tip_diameter": 9.0}, "flat tip's diameter"),
+                            ({"corner_r": 1.2}, "does not fit"), ({"tip_form": "ball", "corner_r": 0.0}, "ball tip's radius"),
+                            ({"tip_form": "ball"}, "must be 0"), ({"kind": "end_mill"}, "cannot have"),
+                            ({"flute_len": 0.2}, "tall"), ({"tip_diameter": 4.09}, "meets the cone")):
+            self.assertIn(why, why_not_sane({**d, **change}) or "", change)
+
+    def test_angle_must_be_usable(self):
+        for ta in (-3, 90, 120):
+            result = convert([tapered({"TA": ta})], TAPERS)
+            self.assertIn("angle (TA)", result.skipped[0].reason)
+
+    def test_without_an_angle_it_is_straight(self):
+        # SpeTool's bowl and core box bits; needs no new CamCraft
+        for re_, kind in ((0, "end_mill"), (0.5, "bull_nose"), (1, "ball_nose")):
+            d, result = one(tapered({"TA": 0, "RE": re_}, description="bowl bit"))
+            self.assertEqual((d["kind"], d["corner_r"], d["diameter"]), (kind, re_, 2))
+            self.assertEqual(result.version, 1)
+            self.assertEqual(self.verifies(result), [])
+
+    def test_taper_by_name_without_an_angle_is_refused(self):
+        # Harvey 832860: "TAPERED SQUARE END MILL" with TA 0
+        self.assertIn("without a taper angle", convert([tapered({"TA": 0})], TAPERS).skipped[0].reason)
+
+    def test_cone_past_the_shank_is_warned_about(self):
+        # BitsBits 4TEB10-020: 5 degrees over 76 mm of flute on a 6.35 mm shank
+        _, result = one(tapered({"TA": 5, "LCF": 76}), TAPERS)
+        self.assertTrue(any("over its 6 mm shank" in w for w in result.warnings))
+
+    def test_default_surface_speed_holds_at_the_widest(self):
+        d, result = one(tapered(presets=[]), Options(unreleased_tapers=True, default_vc=100, default_feed=500))
+        self.assertAlmostEqual(d["rpm"], 100000 / (math.pi * d["diameter"]), places=3)
+        self.assertEqual(self.verifies(result), [])
+
+    def test_output_check_reads_the_tip(self):
+        for e, change in ((tapered(), {"tip_form": "ball"}), (tapered(), {"tip_diameter": 1.5}),
+                          (tapered(), {"diameter": 2.0}), (tapered(), {"tip_angle": 3.0}),
+                          (tapered({"RE": 0.3}), {"corner_r": 0.0}), (tapered(), {"kind": "end_mill"}),
+                          (tapered({"RE": 1 / self.tangent(3)}), {"tip_form": "flat", "tip_diameter": 2.0})):
+            d, result = one(e, TAPERS)
+            d.update(change)
+            self.assertTrue(self.verifies(result), change)
+        d, result = one(tool("chamfer mill", geometry={"TA": 45}))
+        d.update(tip_form="flat", tip_diameter=1.0)
+        self.assertTrue(any("tip form" in p for p in self.verifies(result)))
+
+    def test_chamfer_mills_keep_their_sharp_point(self):
+        # CamCraft's operations refuse a flat tip, so a V-bit with one would be useless
+        d, result = one(tool("chamfer mill", geometry={"TA": 45, "tip-diameter": 0.5}), TAPERS)
+        self.assertNotIn("tip_form", d)
+        self.assertEqual(result.version, 1)
+
+
 class UndercutShankTests(unittest.TestCase):
     """#27: undercut cutters whose shank is as wide as the head."""
 
@@ -1240,6 +1373,8 @@ class PrivateLibraryTests(unittest.TestCase):
                 self.check(result)
                 # a catalog without presets converts on defaults only (#16's thread mills)
                 self.check(convert(load_library(src), DEFAULT_SPEEDS))
+                if any(e.get("type") == "tapered mill" for e in load_library(src)):
+                    self.check(convert(load_library(src), dataclasses.replace(DEFAULT_SPEEDS, unreleased_tapers=True)))
                 if not src.is_relative_to(THIRD_PARTY):
                     unexplained = [f"{s.name}: {s.reason}" for s in result.skipped if not s.category]
                     self.assertEqual(unexplained, [])
