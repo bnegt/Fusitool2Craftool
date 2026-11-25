@@ -469,7 +469,7 @@ the tools but **no operation cuts with a flat or ball tip yet**.
 | internal and face grooving, round grooving, internal threading tools | CamCraft's blade and threading insert are outside tools, and its blade is square |
 | threading tools without a pitch (`TP`) or with a form other than 60 degrees | no known V width ([#20](https://github.com/bnegt/Fusitool2Craftool/issues/20)) |
 | dovetail mill with a corner radius | CamCraft's dovetail has a sharp corner. Fusion's `DC` is at the top of the radius, so CamCraft's whole flank would be too thin (up to 1.3 mm in vendor libraries) and it would miss a gouge ([NeoTech/Camcraft#4004](https://github.com/NeoTech/Camcraft/issues/4004)) |
-| left-hand cutter (`HAND` false) other than a left-hand tap | it needs a reversed spindle, and a CamCraft tool has no cutter hand: CamCraft would turn it forward ([#38](https://github.com/bnegt/Fusitool2Craftool/issues/38)) |
+| left-hand cutter (`HAND` false) other than a left-hand tap | it needs a reversed spindle, and a CamCraft tool has no cutter hand: CamCraft would turn it forward ([#38](https://github.com/bnegt/Fusitool2Craftool/issues/38), [NeoTech/Camcraft#4031](https://github.com/NeoTech/Camcraft/issues/4031)) |
 | circle segment mill (barrel, lens, oval, taper) | CamCraft has no kind for them |
 | probe | not a cutter |
 | waterjet, laser and plasma cutter; laser powder, laser wire and electric arc wire | cutting and additive heads, not cutters |
@@ -550,9 +550,10 @@ CamCraft can now handle the tools we skip
   [#896](https://github.com/NeoTech/Camcraft/issues/896) (roundover bits),
   [#897](https://github.com/NeoTech/Camcraft/issues/897) (reamers,
   counterbores), [#3368](https://github.com/NeoTech/Camcraft/issues/3368)
-  (tapered mill tip forms; closed, waiting for a release) and
+  (tapered mill tip forms; closed, waiting for a release),
   [#4004](https://github.com/NeoTech/Camcraft/issues/4004) (dovetails with a
-  corner radius) are still open
+  corner radius) and [#4031](https://github.com/NeoTech/Camcraft/issues/4031)
+  (a cutter hand, for left-hand drills and thread mills) are still open
 - the tool kinds, material words and `.camtools` versions of CamCraft's
   **latest release** are unchanged (what is only on main gives a skip note)
 
