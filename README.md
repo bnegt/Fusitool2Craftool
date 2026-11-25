@@ -357,8 +357,8 @@ row is listed with the reason (`unmatched`, `duplicate <material>`,
   compensation point than Fusion's tip tangent. A blade's touch-off corner is
   always CamCraft's default: check it ([#20](https://github.com/bnegt/Fusitool2Craftool/issues/20)).
 - A blade's corner radius is not written (CamCraft's blade is square), with a
-  warning. A partial profile threading insert is written for its `TP`, with a
-  warning if Fusion states a larger pitch.
+  warning. A partial profile threading insert is written for its `TP` (the
+  coarsest pitch, in vendor libraries), with a warning if Fusion states a range.
 
 ### Default speeds
 

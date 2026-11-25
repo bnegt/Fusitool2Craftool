@@ -159,9 +159,13 @@ def _thread(d: dict, g: dict, length, warnings: list[str]) -> None:
     if angle is None or not math.isclose(angle, THREAD_FORM, abs_tol=1e-6):
         raise c.ToolRefused(f"thread form {angle:g} degrees: only the 60 degree form has a known V width"
                             if angle else "no thread form angle (thread-profile-angle)")
-    top = max(length(g, "TPX"), length(g, "maximum-thread-pitch"))
-    if top > pitch * (1 + 1e-6):
-        warnings.append(f"partial profile up to {top:g} mm pitch: CamCraft's insert has one V, written for {pitch:g} mm")
+    # A range of pitches: vendors give it as TPN..TPX with TP the coarsest,
+    # Fusion's own fields may leave TP at the finest.
+    pitches = [p for k in ("TPN", "TPX", "minimum-thread-pitch", "maximum-thread-pitch") if (p := length(g, k))]
+    low, top = min(pitches + [pitch]), max(pitches + [pitch])
+    if top > low * (1 + 1e-6):
+        warnings.append(f"partial profile, {low:.4g} to {top:.4g} mm pitch: CamCraft's insert has one V, "
+                        f"written for {pitch:.4g} mm, check the V and the feed for another pitch")
     d["tip_angle"], d["width"] = THREAD_FORM, WIDTH_PER_PITCH * pitch
 
 
