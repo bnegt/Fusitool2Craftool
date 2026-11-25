@@ -165,7 +165,7 @@ def compare(d: dict, entry: dict, options=None) -> list[str]:
     if single:
         allowed = {"thread_mill_single"}
     if ftype == "form mill":
-        allowed = {"thread_mill"}  # a thread mill stored as a form mill (#37)
+        allowed = {"thread_mill", "thread_mill_single"}  # a thread mill stored as a form mill (#37, #47)
     if tapered:
         allowed = {"taper"}
     elif ftype == "tapered mill":  # no taper angle: a straight cutter (#10)
@@ -365,6 +365,38 @@ def _outline_above(entry: dict, start: float) -> list[tuple[float, float, float]
     return out
 
 
+def _single_tooth_problems(d: dict, line: list[tuple[float, float]], dc: float, flute: float) -> list[str]:
+    """One tooth (#47): its crest bounds the finest pitch, its height the coarsest.
+
+    Measured by the tooth's width at three depths: a 60 degree tooth gains
+    2 tan 30 for every mm of depth, and what is left at the crest is the flat.
+    """
+    out: list[str] = []
+    cross = lambda level, up: [z0 + (z1 - z0) * (level - r0) / (r1 - r0)  # noqa: E731
+                               for (z0, r0), (z1, r1) in zip(line, line[1:]) if z0 < flute - 1e-9
+                               and (r0 < level <= r1 if up else r1 < level <= r0)]
+    steps = [(r0, r1) for (_, r0), (_, r1) in zip(line, line[1:])]
+    feet = [r0 for r0, r1 in steps if abs(r1 - dc / 2) < 2e-3 and r0 < r1 - 2e-3][:1]
+    feet += [r1 for r0, r1 in steps if abs(r0 - dc / 2) < 2e-3 and r1 < r0 - 2e-3][:1]
+    if len(feet) < 2:
+        return ["a single-form thread mill is written, but the outline has no tooth"]
+    height = dc / 2 - max(feet)
+    flats = []
+    for part in (0.2, 0.5, 0.8):
+        up, down = cross(dc / 2 - part * height, True), cross(dc / 2 - part * height, False)
+        if len(up) != 1 or len(down) != 1:
+            return [f"a single-form thread mill is written for {len(up)} teeth"]
+        flats.append(down[0] - up[0] - 2 * part * height * math.tan(math.radians(30)))
+    if max(flats) - min(flats) > 5e-3 + 0.01 * height:
+        out.append("the outline's tooth is not of the 60 degree form")
+    coarsest, finest = d.get("pitch") or 0.0, d.get("pitch_min") or 0.0
+    if abs(0.5413 * coarsest - height) > 2.5e-3:
+        out.append(f"pitch is {coarsest}, the outline's {round(height, 4)} mm tooth is for {round(height / 0.5413, 4)}")
+    if finest < max(8 * max(flats), 0.2) - 1.5e-2 or finest > max(8 * max(flats), 0.2) + 1.5e-2:
+        out.append(f"pitch_min is {finest}, the outline's {round(max(flats), 4)} mm crest gives {round(max(8 * max(flats), 0.2), 4)}")
+    return out
+
+
 def _form_thread_problems(d: dict, entry: dict, f, check) -> list[str]:
     """A thread mill stored as a form mill (#37), by where its outline crosses the flanks."""
     out: list[str] = []
@@ -382,9 +414,11 @@ def _form_thread_problems(d: dict, entry: dict, f, check) -> list[str]:
     # the collar or shank above the teeth may rise past the level once more
     last = max((z for z, r in line if abs(r - dc / 2) < 2e-3 and z <= flute), default=0.0)
     high, low = [z for z in high if z <= last + 1e-6], [z for z in low if z <= last + 1e-6]
-    if len(high) < 2 or any(abs(b - a - pitch) > max(3e-3, 1.5e-3 * pitch) for a, b in zip(high, high[1:])):
+    if d.get("kind") == "thread_mill_single":
+        out.extend(_single_tooth_problems(d, line, dc, flute))
+    elif len(high) < 2 or any(abs(b - a - pitch) > max(3e-3, 1.5e-3 * pitch) for a, b in zip(high, high[1:])):
         out.append(f"pitch is {pitch}, the outline's flanks are {[round(b - a, 4) for a, b in zip(high, high[1:])][:4]} apart")
-    if len(low) != len(high) or any(abs(a - b - 0.35 * pitch * math.tan(math.radians(30))) > 0.01 * pitch + 2e-3
+    if d.get("kind") != "thread_mill_single" and len(low) != len(high) or any(abs(a - b - 0.35 * pitch * math.tan(math.radians(30))) > 0.01 * pitch + 2e-3
                                     for a, b in zip(high, low)):
         out.append("the outline has no 60 degree teeth of CamCraft's height")
     if flute < (f("LCF") or 0.0) - TOL:

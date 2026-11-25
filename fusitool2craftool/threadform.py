@@ -1,9 +1,10 @@
 """Thread mills that vendors store as Fusion form mills (#37).
 
 A ``form mill`` is a drawn outline (``geometry.profile``) without a pitch or a
-row count. Harvey and Valor store their multi-form thread mills that way. The
-outline states what CamCraft's ``thread_mill`` needs: rows of equal 60 degree
-teeth, their pitch, where they end, and the neck and shank above them.
+row count. Harvey and Valor store their thread mills that way. The outline
+states what CamCraft needs: rows of equal 60 degree teeth, their pitch, where
+they end, and the neck and shank above them. A single tooth (Harvey's
+single-form cutters) states a range of pitches by its height and its crest.
 """
 
 from __future__ import annotations
@@ -29,6 +30,8 @@ Point = tuple[float, float]  # (z, r), mm
 @dataclass
 class ThreadForm:
     pitch: float
+    pitch_min: float | None
+    """The finest pitch of a single tooth, or None for rows at one pitch."""
     flute_len: float
     shaft: list[tuple[float, float, float]]
     """(height, lower, upper diameter) from the teeth to the body's end."""
@@ -47,19 +50,22 @@ def read(entry: dict, dc: float, lcf: float | None, body: float | None) -> Threa
     if len(points) < 4 or not lcf or body is None:
         raise c.ToolRefused("thread mill stored as a form mill without an outline")
     crests = _crests(points, lcf)
-    if len(crests) < 2:
-        raise c.ToolRefused("thread mill stored as a form mill with one row of teeth: Fusion does not state its finest pitch")
+    if not crests:
+        raise c.ToolRefused("thread mill stored as a form mill without teeth in its outline")
     if any(abs(r - dc / 2) > 2 * SAME for _, _, r in crests):
         raise c.ToolRefused("thread mill stored as a form mill whose teeth are not all on its diameter (a tapered thread?)")
-    pitch = _pitch(crests)
-    _check_teeth(points, crests, pitch)
+    if len(crests) == 1:
+        pitch, pitch_min = _pitch_range(points, crests[0])
+    else:
+        pitch, pitch_min = _pitch(crests), None
+        _check_teeth(points, crests, pitch)
     # the end of the last tooth: the first point above its crest
     end = min(z for z, _ in points if z > crests[-1][1] + 1e-6)
     flute = max(lcf, end)
     shaft = _above(points, flute, body)
     if not shaft:
         raise c.ToolRefused("thread mill stored as a form mill: its outline does not reach its body length (LB)")
-    return ThreadForm(pitch, flute, shaft)
+    return ThreadForm(pitch, pitch_min, flute, shaft)
 
 
 def outline(entry: dict) -> list[Point]:
@@ -122,6 +128,30 @@ def _pitch(crests: list[tuple[float, float, float]]) -> float:
     if abs(best - mean) > mean * PITCH_TOL:
         raise c.ToolRefused(f"thread mill stored as a form mill with a pitch of {mean:.4g} mm, which is no standard one")
     return float(best)
+
+
+def _pitch_range(points: list[Point], crest: tuple[float, float, float]) -> tuple[float, float]:
+    """Coarsest and finest pitch of a single tooth.
+
+    CamCraft takes a tooth of 0.5413 x pitch at the coarsest pitch, and the
+    flat crest of a standard thread is pitch / 8: a wider one cuts too wide.
+    """
+    start, end, r = crest
+    below = [q for q in points if q[0] < start - 1e-9 or (q[0] <= start and q[1] < r - SAME)]
+    above = [q for q in points if q[0] > end + 1e-9]
+    if not below or not above:
+        raise c.ToolRefused("thread mill stored as a form mill without a whole tooth")
+    (z0, r0), (z1, r1) = below[-1], above[0]
+    for dz, dr in ((start - z0, r - r0), (z1 - end, r - r1)):
+        if abs(math.degrees(math.atan2(dz, dr)) - FLANK) > FLANK_TOL:
+            raise c.ToolRefused("thread mill stored as a form mill whose teeth are not of the 60 degree form")
+    height = min(r - r0, r - r1) + 2e-3  # 2 um of rounding, as for rows of teeth
+    coarsest = math.floor(height / c.INTERNAL_DEPTH_PER_PITCH * 1e4) / 1e4
+    finest = max(math.ceil((end - start) * 8 * 1e4 - 1e-6) / 1e4, METRIC[0])
+    if finest > coarsest:
+        raise c.ToolRefused(f"thread mill stored as a form mill whose tooth fits no pitch: its crest needs {finest:.4g} mm, "
+                            f"its height allows {coarsest:.4g} mm")
+    return coarsest, finest
 
 
 def _check_teeth(points: list[Point], crests: list[tuple[float, float, float]], pitch: float) -> None:
