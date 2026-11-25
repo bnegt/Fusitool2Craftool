@@ -27,7 +27,7 @@ from fusitool2craftool.convert import Options, convert
 from fusitool2craftool.fusion import load_library
 from fusitool2craftool.push import PROTOCOL_VERSION, _close, _content_text, _Session, push
 
-from .test_convert import DEFAULT_SPEEDS, FIXTURES, PRIVATE, corner_chamfer, holder, keyseat, single_form, tool
+from .test_convert import ARBOR, DEFAULT_SPEEDS, FIXTURES, PRIVATE, corner_chamfer, holder, keyseat, saw, single_form, tool
 from .test_lathe import TYPES, lathe
 
 CLI = os.environ.get("CAMCRAFT_CLI") or shutil.which("camcraft-cli")
@@ -53,6 +53,11 @@ def edge_cases() -> list[dict]:
         tool(description="flat bottom drill", type_="drill", unit="inches",
              geometry={"DC": 0.625, "LCF": 2.677, "LB": 3.15, "SFDM": 0.625, "SIG": 180},
              presets=[{"name": "P", "n": 2139, "v_f_plunge": 25.67}]),
+        tool(description="spot drill 60", type_="spot drill", unit="inches",
+             geometry={"DC": 0.125, "LCF": 0.375, "LB": 0.92, "SFDM": 0.125, "SIG": 60},
+             presets=[{"name": "P", "n": 4000, "v_f_plunge": 8}]),
+        saw(description="saw without an arbor"),
+        saw(description="saw on its arbor", holder=ARBOR),
         tool(description="tap M8 left", type_="tap left hand", geometry={"DC": 8, "TP": 1.25},
              presets=[{"name": "P", "n": 500}]),
         tool(description="thread mill", type_="thread mill", geometry={"DC": 10, "LCF": 15, "TP": 1.5}),
@@ -364,6 +369,14 @@ class UndercutLiveTests(unittest.TestCase):
         slot = [(8, 0), (8 - top * math.tan(math.radians(30)), top)]
         self.assertEqual(self.findings(e, 15, slot, 2 * slot[-1][0]), set())
         self.assertEqual(self.findings(e, 25, slot, 2 * slot[-1][0]), {"shank_hit"})
+
+    def test_saw_is_held_where_its_arbor_widens(self):
+        # #31: 12 mm wide for 20 mm above the 1.6 mm blade, 40 mm wide above that
+        blade = [(16, 0), (16, 0.0625 * 25.4)]  # the 31.75 mm saw; the slot above it clears the arbor
+        self.assertEqual(self.findings(saw(holder=ARBOR), 21, blade, 14), set())
+        self.assertEqual(self.findings(saw(holder=ARBOR), 22, blade, 14), {"shank_hit"})
+        # without an arbor the default 50 mm holder stands on the blade
+        self.assertEqual(self.findings(saw(), 5, blade, 14), {"shank_hit"})
 
 
 def revolved(path: Path, profile: list[tuple[float, float]], n: int = 120) -> None:

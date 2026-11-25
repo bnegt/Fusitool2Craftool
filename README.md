@@ -10,7 +10,7 @@ one go is included.
 
 Pure Python 3.10+, no dependencies. For **CamCraft 0.26.0 or newer**; older
 versions may refuse a library. Tested against CamCraft 0.26.0: all
-134,388 tools converted from 65 real libraries import without a change (see
+134,617 tools converted from 65 real libraries import without a change (see
 [Testing against CamCraft](#testing-against-camcraft)).
 
 ## How to run
@@ -225,7 +225,7 @@ This runs `camcraft-cli mcp --connect 127.0.0.1:7777` and calls CamCraft's
 | ball end mill | `ball_nose` |
 | bull nose end mill | `bull_nose` (`ball_nose` if the corner radius is D/2, up to 10 % over for vendor rounding) |
 | chamfer mill, counter sink | `taper` (Fusion's half angle `TA` is doubled) |
-| drill, spot drill, center drill | `drill` (`end_mill` if the point angle is 180: a flat bottom drill) |
+| drill, spot drill, center drill | `drill` (`end_mill` if the point angle is 180: a flat bottom drill; `taper` if it is 60 or less) |
 | tap right/left hand | `tap` |
 | thread mill | `thread_mill` (`thread_mill_single` if it has one row of teeth, `NT` 1, and no `LCF`) |
 | corner chamfer end mill | `bull_nose` (an approximation, see below) |
@@ -255,6 +255,18 @@ This runs `camcraft-cli mcp --connect 127.0.0.1:7777` and calls CamCraft's
   `--holder-cylinders` the one cylinder starts at the neck's top and encloses
   shank and holder. A dovetail whose shank widens right from the head has no
   reach past its head. If Fusion states no narrower neck, the tool is skipped.
+- Arbor-mounted slitting saws (`LB` = `LCF`: a blade without a shank) get a
+  neck of 0.001 mm, because CamCraft needs one, with a warning. The Fusion
+  holder starts right on the blade, so it must be the saw's arbor: CamCraft
+  then holds a cut where the arbor gets too wide. Without one the default
+  holder stands there, and CamCraft holds anything deeper than the blade is
+  thick. Fusion does not model the screw or flange under the blade, so
+  CamCraft does not see it.
+- Drills and spot drills with a point of 60 degrees or less (many "drill/end
+  mills") become a `taper` (chamfer mill) with the same cone, with a warning:
+  CamCraft wants a point over 60 degrees on a drill. Its Drill operation does
+  not take a chamfer mill; Engrave, for one, does. The speeds follow Fusion's
+  drill rules, as for flat bottom drills below.
 - Flat bottom drills (point angle `SIG` 180) become a center-cutting
   `end_mill`, with a warning. CamCraft refuses a tip angle of 180 and wants a
   point on every drill, and its drilling cycles take only drills, taps and
@@ -460,10 +472,10 @@ CAMCRAFT_CLI=~/camcraft-0.26.0-linux-x86_64/camcraft-cli \
     python3 -m unittest discover -s tests -t .
 ```
 
-Last run (CamCraft 0.26.0, 2026-11-25): 65 libraries, 134,388 tools written
-with default speeds (74,823 without), all imported, none renamed or skipped,
+Last run (CamCraft 0.26.0, 2026-11-25): 65 libraries, 134,617 tools written
+with default speeds (75,051 without), all imported, none renamed or skipped,
 with and without `--all-presets` (37,252 material rows). 40 of the libraries
-and 126,707 of the tools are Autodesk's vendor libraries; with them the whole
+and 126,936 of the tools are Autodesk's vendor libraries; with them the whole
 suite takes about 2.5 minutes (1 minute without CamCraft).
 
 Converted lathe tools turn, bore, groove and thread a part in CamCraft, and

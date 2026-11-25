@@ -112,6 +112,10 @@ def compare(d: dict, entry: dict, options=None) -> list[str]:
     single = ftype == "thread mill" and flute is None and g.get("NT") == 1
     if single:
         out.extend(_single_form_problems(d, g, f, check, body))
+    elif ftype == "slot mill" and body is not None and flute is not None and -1e-6 <= body - flute < 0.001:
+        # a bare saw blade (#31): CamCraft needs a neck over 0, so 1 um of it
+        if not (_is_num(d.get("shank_len")) and 0 < d["shank_len"] <= 0.001 + 1e-9):
+            out.append(f"shank_len is {d.get('shank_len')}, a blade without a shank needs 0.001")
     elif body is not None and flute is not None:
         check("shank_len", max(body - flute, 0.0), f"LB - {flute_key}")
 
@@ -132,6 +136,9 @@ def compare(d: dict, entry: dict, options=None) -> list[str]:
         allowed = {"end_mill"}  # CamCraft drills need a point (#17)
         if d.get("tip_angle") or d.get("corner_r"):
             out.append("a flat bottom drill must be a flat end mill (tip angle and corner radius 0)")
+    if base_kind == "drill" and _is_num(g.get("SIG")) and 0 < round(g["SIG"], 6) <= 60:
+        allowed = {"taper"}  # CamCraft drills need a point over 60 degrees (#31)
+        check("tip_angle", float(g["SIG"]), "SIG")
     if ftype == "corner chamfer end mill":
         # an inscribed corner radius, or a sharp corner without chamfer numbers (#18)
         w, a = f("chamfer-width"), g.get("chamfer-angle")
@@ -321,7 +328,7 @@ def _matching_preset(entry: dict, d: dict, options=None) -> dict | None:
     g = entry.get("geometry") or {}
     kind, pitch = d.get("kind"), d.get("pitch", 0)
     if KINDS.get(str(entry.get("type", "")).strip().lower()) == "drill":
-        kind = "drill"  # a flat bottom drill keeps Fusion's drill speeds (#17)
+        kind = "drill"  # a drill written as an end mill or a cone keeps Fusion's drill speeds (#17, #31)
     rpm, feed = d.get("rpm", -1), d.get("feed", -1)
     if not (_is_num(rpm) and _is_num(feed)):
         return None

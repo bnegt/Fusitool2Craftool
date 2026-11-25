@@ -649,6 +649,96 @@ def keyseat(geometry=None, segments=((0.75, 0.25, 0.25), (0.21651, 0.25, 0.5)), 
                     {"height": h, "lower-diameter": lo, "upper-diameter": up} for h, lo, up in segments]}, **extra)
 
 
+ARBOR = {"unit": "millimeters", "segments": [
+    {"height": 20, "lower-diameter": 12, "upper-diameter": 12},
+    {"height": 30, "lower-diameter": 40, "upper-diameter": 40}]}
+
+
+def saw(geometry=None, **extra):
+    """Harvey SAB0625's shape: a bare 1-1/4" x 1/16" blade with a 3/8" bore (#31)."""
+    return tool("slot mill", unit="inches", description=extra.pop("description", "slitting saw"),
+                geometry={"DC": 1.25, "LCF": 0.0625, "LB": 0.0625, "OAL": 0.0625, "SFDM": 0.375, "NOF": 24,
+                          "shoulder-diameter": 0.375, "shoulder-length": 0.0625, **(geometry or {})}, **extra)
+
+
+class SharpDrillAndSawTests(unittest.TestCase):
+    """#31: points of 60 degrees or less, and saws without a shank."""
+
+    def verifies(self, result):
+        with tempfile.TemporaryDirectory() as tmp:
+            return verify_file(camtools.write(result, Path(tmp) / "out.camtools"), result)
+
+    def sharp(self, angle, type_="spot drill", **geometry):
+        return tool(type_, geometry={"DC": 6, "LCF": 18, "LB": 40, "SFDM": 6, "SIG": angle, **geometry},
+                    presets=[{"name": "P", "n": 4000, "v_f_plunge": 200}])
+
+    def test_sharp_point_is_a_chamfer_mill(self):
+        for type_ in ("drill", "spot drill", "center drill"):
+            d, result = one(self.sharp(60, type_))
+            self.assertEqual((d["kind"], d["tip_angle"], d["rpm"], d["feed"]), ("taper", 60, 4000, 200))
+            self.assertTrue(any("imported as a chamfer mill" in w for w in result.warnings))
+            self.assertEqual(self.verifies(result), [])
+
+    def test_the_limit_is_judged_as_written(self):
+        # 60.0000001 is written as 60.0, which CamCraft's drill refuses
+        for angle, kind in ((30, "taper"), (60.0000001, "taper"), (60.001, "drill"), (90, "drill")):
+            d, result = one(self.sharp(angle))
+            self.assertEqual(d["kind"], kind, angle)
+            self.assertEqual(self.verifies(result), [])
+
+    def test_sharp_point_takes_the_drill_defaults(self):
+        e = tool("spot drill", geometry={"DC": 6, "LCF": 18, "LB": 40, "SFDM": 6, "SIG": 60}, presets=[])
+        d, result = one(e, Options(default_rpm=9000, default_feed=900,
+                                   kind_defaults={"drill": {"rpm": 1500, "feed": 80}, "taper": {"rpm": 1, "feed": 1}}))
+        self.assertEqual((d["kind"], d["rpm"], d["feed"]), ("taper", 1500, 80))
+        self.assertEqual(self.verifies(result), [])
+
+    def test_flat_tip_of_a_sharp_point_is_warned_about(self):
+        _, result = one(self.sharp(60, **{"tip-diameter": 0.5}))
+        self.assertTrue(any("flat tip of 0.5 mm" in w for w in result.warnings))
+
+    def test_output_check_wants_the_cone(self):
+        d, result = one(self.sharp(60))
+        d["kind"] = "drill"
+        self.assertTrue(self.verifies(result))
+        d["kind"], d["tip_angle"] = "taper", 90
+        self.assertTrue(self.verifies(result))
+
+    def test_saw_has_the_shortest_neck(self):
+        d, result = one(saw(holder=ARBOR))
+        self.assertEqual((d["kind"], d["shank_len"], d["shank_d"]), ("t_slot", 0.001, 9.525))
+        self.assertAlmostEqual(d["body"]["spun"][0][0], 1.5875 + 0.001, places=6)
+        self.assertEqual((d["holder_d"], d["holder_len"]), (40, 50))
+        self.assertTrue(any("arbor-mounted saw" in w for w in result.warnings))
+        self.assertEqual(self.verifies(result), [])
+
+    def test_saw_without_an_arbor_gets_the_default_holder(self):
+        d, result = one(saw())
+        self.assertEqual((d["holder_d"], d["holder_len"], d["shank_len"]), (50, 40, 0.001))
+        self.assertNotIn("body", d)
+        self.assertEqual(self.verifies(result), [])
+
+    def test_saw_with_a_shank_is_unchanged(self):
+        d, result = one(saw({"LB": 0.5, "OAL": 0.5}))
+        self.assertAlmostEqual(d["shank_len"], 0.4375 * 25.4, places=5)
+        self.assertFalse(any("arbor-mounted" in w for w in result.warnings))
+
+    def test_holder_past_the_blade_is_still_refused(self):
+        # stick-out shorter than the blade: the holder would stand in the cut
+        result = convert([saw({"LB": 0.05})])
+        self.assertIn("neck length", result.skipped[0].reason)
+
+    def test_other_undercut_cutters_still_need_a_neck(self):
+        for type_, g in (("lollipop mill", {"DC": 10, "LCF": 5}), ("dovetail mill", {"DC": 20, "LCF": 4, "TA": 30})):
+            result = convert([tool(type_, geometry={"SFDM": 6, "LB": g["LCF"], "OAL": g["LCF"], **g})])
+            self.assertEqual(len(result.skipped), 1, type_)
+
+    def test_output_check_wants_the_saws_neck(self):
+        d, result = one(saw(holder=ARBOR))
+        d["shank_len"] = 5.0
+        self.assertTrue(any("shank_len" in p for p in self.verifies(result)))
+
+
 class UndercutShankTests(unittest.TestCase):
     """#27: undercut cutters whose shank is as wide as the head."""
 
