@@ -6,10 +6,10 @@ download them into `private/test-libraries/` (git-ignored). The tests then
 convert and verify every one of them (`PrivateLibraryTests` in
 `tests/test_convert.py`).
 
-Last checked 2026-11-25 (with default speeds): 64 libraries convert, 134,384
+Last checked 2026-11-25 (with default speeds): 64 libraries convert, 134,613
 tools written, all verified and accepted by CamCraft 0.26.0 (with and without
 `--all-presets`): 24 of the sources below with 7,677 tools, and 40 of
-[Autodesk's vendor libraries](#autodesks-vendor-libraries) with 126,707. The
+[Autodesk's vendor libraries](#autodesks-vendor-libraries) with 126,936. The
 others convert to nothing: `OMAX.json` (one waterjet), three holder libraries
 and two probe libraries.
 
@@ -68,10 +68,10 @@ gives none), "With defaults" uses the tests' default speeds:
 | Library (catalogue name) | Entries | Convert | With defaults | Mostly |
 |---|---|---|---|---|
 | Harvey Tool/End Mills | 11,937 | 11,449 | 11,449 | flat end mill, ball end mill, bull nose end mill |
-| Harvey Tool/Holemaking and Threading | 3,959 | 2,170 | 2,170 | drill, form mill, spot drill |
-| Harvey Tool/Specialty Profiles | 7,866 | 5,285 | 5,285 | slot mill, chamfer mill, form mill |
+| Harvey Tool/Holemaking and Threading | 3,959 | 2,194 | 2,194 | drill, form mill, spot drill |
+| Harvey Tool/Specialty Profiles | 7,866 | 5,484 | 5,484 | slot mill, chamfer mill, form mill |
 | Helical Solutions/End Mills | 6,007 | 6,007 | 6,007 | bull nose end mill, flat end mill, ball end mill |
-| Helical Solutions/Specialty Profiles | 190 | 185 | 185 | chamfer mill, spot drill |
+| Helical Solutions/Specialty Profiles | 190 | 190 | 190 | chamfer mill, spot drill |
 | BitsBits/BitsBits Cutting Tools | 62 | 50 | 50 | flat end mill, tapered mill, ball end mill |
 | IMCO/Solid End Mills Metric | 1,635 | 1,631 | 1,635 | bull nose end mill, flat end mill, ball end mill |
 | IMCO/Solid End Mills Imperial | 3,243 | 3,243 | 3,243 | bull nose end mill, flat end mill, ball end mill |
@@ -93,7 +93,7 @@ gives none), "With defaults" uses the tests' default speeds:
 | Sandvik Coromant/Solid Hole Making | 4,315 | 0 | 4,085 | tap right hand, drill, reamer |
 | Guhring/Solid Hole Making | 20,121 | 0 | 20,121 | drill, center drill, spot drill |
 | NexGen Tooling/NexGen Tooling | 3,981 | 0 | 3,981 | bull nose end mill, flat end mill, ball end mill |
-| Garr Tool/Garr Tool | 11,092 | 0 | 10,496 | drill, bull nose end mill, flat end mill |
+| Garr Tool/Garr Tool | 11,092 | 0 | 10,497 | drill, bull nose end mill, flat end mill |
 | Valor Holemaking/Valor Holemaking | 2,251 | 2,001 | 2,001 | drill, form mill, chamfer mill |
 | OSG/End Mills | 259 | 259 | 259 | flat end mill |
 | Dormer Pramet/Dormer Pramet | - | - | - | not available |
@@ -119,13 +119,12 @@ gives none), "With defaults" uses the tests' default speeds:
 | Ingersoll/Turning Metric/Turning Metric | - | - | - | not available |
 | Widia/Turning Imperial/Turning Imperial | - | - | - | not available |
 | Widia/Turning Metric/Turning Metric | - | - | - | not available |
-| **Total** | **134,498** | **67,211** | **126,707** | |
+| **Total** | **134,498** | **67,439** | **126,936** | |
 
 The tools skipped even with defaults, by reason: form mill 3,023; tapered mill
 925; reamer 876; counterbore 434; dovetail with a corner radius 372; radius
-mill 270; drill with a point of 60 degrees or less 119; undercut cutter without
-a neck length 110, or without a neck narrower than the head 3; probe 22; other
-17.
+mill 270; probe 22; undercut cutter without a neck narrower than the head 3;
+other 17.
 
 ## Fusion tool types covered
 
@@ -151,7 +150,7 @@ or is skipped under a family name
 | counter bore | 435 | 3 | skipped: counterbore |
 | counter sink | 108 | 7 | `taper` |
 | dovetail mill | 633 | 5 | `dovetail` |
-| drill | 34,969 | 27 | `drill` |
+| drill | 34,969 | 27 | `drill` (`taper` for a point of 60 degrees or less) |
 | electric arc wire | **none** | - | skipped: additive head |
 | face mill | 168 | 14 | `end_mill` |
 | flat end mill | 25,050 | 45 | `end_mill` |
@@ -167,7 +166,7 @@ or is skipped under a family name
 | reamer | 881 | 9 | skipped: reamer |
 | shaft | **none** | - | skipped: holder part |
 | slot mill | 3,746 | 9 | `t_slot` |
-| spot drill | 1,249 | 16 | `drill` |
+| spot drill | 1,249 | 16 | `drill` (`taper` for a point of 60 degrees or less) |
 | tap left hand | 1 | 1 | `tap` |
 | tap right hand | 2,744 | 7 | `tap` |
 | tapered mill | 967 | 11 | skipped: tapered mill |

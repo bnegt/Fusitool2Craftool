@@ -132,6 +132,7 @@ KINDS = {
 UNDERCUT = ("t_slot", "keyseat", "lollipop", "dovetail")
 
 DEFAULT_DRILL_ANGLE = 118.0
+MIN_DRILL_ANGLE = 60.0  # CamCraft's drill kind wants a point over this (tool_sanity.rs)
 
 # thread_mill.rs: radial depth of an internal / external 60 degree thread
 # per mm of pitch.
@@ -409,6 +410,14 @@ def convert_tool(entry: dict, options: Options, presets_report: Counter | None =
             d["kind"] = "end_mill"
             warnings.append("flat bottom drill (point angle 180) imported as a center-cutting end mill: "
                             "CamCraft drills need a point, so drilling cycles won't offer it")
+        elif round(angle, 6) <= MIN_DRILL_ANGLE:
+            # A drill's point must be over 60 degrees; a chamfer mill is the
+            # same sharp cone under the same cylinder (#31).
+            d["kind"] = "taper"
+            d["tip_angle"] = angle
+            warnings.append(f"{angle:g} degree point imported as a chamfer mill: CamCraft drills need a point "
+                            f"over {MIN_DRILL_ANGLE:g} degrees, so drilling cycles won't offer it")
+            _warn_flat_tip(length, warnings)
         else:
             d["tip_angle"] = angle
             _warn_flat_tip(length, warnings)
@@ -449,7 +458,7 @@ def convert_tool(entry: dict, options: Options, presets_report: Counter | None =
     # teeth for --default-fz: Fusion's own count, also past CamCraft's 32-flute
     # field (a 72-tooth slitting saw still takes 72 x f_z per revolution)
     flutes = int(nof) if nof is not None and float(nof).is_integer() and nof >= 1 else None
-    # a flat bottom drill keeps Fusion's drill speeds (its feed is v_f_plunge)
+    # a flat bottom or sharply pointed drill keeps Fusion's drill speeds (its feed is v_f_plunge)
     speed_kind = "drill" if kind == "drill" else d["kind"]
     rpm, feed, preset = _speeds(entry, options, unit, warnings, speed_kind, d["pitch"], dc, flutes,
                                 defaults_report if defaults_report is not None else Counter())
@@ -800,6 +809,12 @@ def _undercut(d: dict, entry: dict, length, body: float | None,
             d["flute_len"] = meet
     if body is not None:
         d["shank_len"] = max(body - d["flute_len"], 0.0)
+        if d["kind"] in ("t_slot", "keyseat") and -1e-6 <= body - d["flute_len"] < MIN_NECK:
+            # A bare blade (#31): the arbor is Fusion's holder, right on the
+            # blade. CamCraft needs some neck under it.
+            d["shank_len"] = MIN_NECK
+            warnings.append("no shank above the blade (an arbor-mounted saw): the holder starts on the blade, so it "
+                            "must be the arbor, and a screw or flange under the blade is not modelled")
     return above
 
 
