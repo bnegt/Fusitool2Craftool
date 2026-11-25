@@ -27,7 +27,7 @@ from fusitool2craftool.convert import Options, convert
 from fusitool2craftool.fusion import load_library
 from fusitool2craftool.push import PROTOCOL_VERSION, _close, _content_text, _Session, push
 
-from .test_convert import DEFAULT_SPEEDS, FIXTURES, PRIVATE, corner_chamfer, holder, single_form, tool
+from .test_convert import DEFAULT_SPEEDS, FIXTURES, PRIVATE, corner_chamfer, holder, keyseat, single_form, tool
 from .test_lathe import TYPES, lathe
 
 CLI = os.environ.get("CAMCRAFT_CLI") or shutil.which("camcraft-cli")
@@ -74,6 +74,18 @@ def edge_cases() -> list[dict]:
              geometry={"DC": 1, "LCF": 0.5, "SFDM": 0.5, "LB": 0.75, "TA": 30}),
         tool(description="dovetail 14 router", type_="dovetail mill", unit="inches",
              geometry={"DC": 1, "LCF": 1, "SFDM": 0.5, "LB": 1.5, "TA": 14}),
+        keyseat(description="keyseat under a wide shank"),
+        keyseat(description="keyseat under a wide shank, held", holder={"unit": "millimeters", "segments": [
+            {"height": 10, "lower-diameter": 20, "upper-diameter": 30}]}),
+        tool(description="dovetail, cone at the head", type_="dovetail mill", unit="inches",
+             geometry={"DC": 0.5, "LCF": 0.218, "LB": 0.61816, "SFDM": 0.5, "TA": 30, "shoulder-length": 0.218,
+                       "shoulder-diameter": 0.24827528},
+             shaft={"segments": [{"height": 0, "lower-diameter": 0.248, "upper-diameter": 0.248},
+                                 {"height": 0.1502, "lower-diameter": 0.248, "upper-diameter": 0.5}]}),
+        tool(description="ball under a wide shank", type_="lollipop mill",
+             geometry={"DC": 1.8, "LCF": 1.612, "LB": 35, "SFDM": 3, "RE": 0.9, "shoulder-diameter": 1.1,
+                       "shoulder-length": 10},
+             shaft={"segments": [{"height": 1.6454, "lower-diameter": 1.1, "upper-diameter": 3}]}),
         star,
         tool(description="drawn holder", unit="inches", geometry={"DC": 0.5, "LCF": 1, "LB": 2, "SFDM": 0.5},
              holder={"unit": "inches", "segments": [
@@ -258,6 +270,100 @@ class ThreadMillingLiveTests(unittest.TestCase):
             d.pop("body")
             d.update(shank_d=4.0, shank_len=52 - d["flute_len"], holder_d=50.0, holder_len=40.0)
         self.assert_shank_hit(self.verify_thread(14, plain))
+
+
+def prism(path: Path, outline: list[tuple[float, float]], length: float) -> None:
+    """An ASCII STL of a counter-clockwise (y, z) outline drawn out along X."""
+    def turn(a, b, c):
+        return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+
+    left, ears = list(range(len(outline))), []
+    while len(left) > 2:  # clip ears
+        for k in range(len(left)):
+            tri = left[k - 1], left[k], left[(k + 1) % len(left)]
+            a, b, c = (outline[i] for i in tri)
+            if turn(a, b, c) > 0 and not any(
+                    turn(a, b, p) >= 0 and turn(b, c, p) >= 0 and turn(c, a, p) >= 0
+                    for p in (outline[i] for i in left if i not in tri)):
+                ears.append((a, b, c))
+                left.pop(k)
+                break
+        else:
+            raise ValueError("outline is not counter-clockwise")
+    x = length / 2
+    facets = [f for a, b, c in ears for f in ([(x, *a), (x, *b), (x, *c)], [(-x, *a), (-x, *c), (-x, *b)])]
+    for a, b in zip(outline, outline[1:] + outline[:1]):
+        facets += [[(-x, *a), (-x, *b), (x, *b)], [(-x, *a), (x, *b), (x, *a)]]
+    lines = ["solid prism"]
+    for f in facets:
+        lines += ["facet normal 0 0 0", "outer loop", *("vertex %.6f %.6f %.6f" % v for v in f), "endloop", "endfacet"]
+    path.write_text("\n".join(lines + ["endsolid prism", ""]))
+
+
+@unittest.skipUnless(CLI, "camcraft-cli not found (set CAMCRAFT_CLI)")
+class UndercutLiveTests(unittest.TestCase):
+    """#27: CamCraft cuts an undercut slot with a cutter whose shank is as wide as its head."""
+
+    TOP = 50.0
+
+    def findings(self, entry, depth: float, head: list[tuple[float, float]], entry_slot: float, change=None) -> set[str]:
+        """What CamCraft finds in a slot ``depth`` deep. ``head`` is the undercut's right
+        side as (y, height over its floor); ``entry_slot`` the width of the slot above it."""
+        result = convert([{**entry, "description": "UC"},
+                          tool(description="EM", geometry={"DC": 6, "SFDM": 6, "LCF": 60, "LB": 70, "OAL": 90})])
+        self.assertEqual(result.skipped, [])
+        if change:
+            change(next(t for t in result.tools if t["name"] == "UC")["definition"])
+        floor, half = self.TOP - depth, entry_slot / 2
+        right = [(y, floor + h) for y, h in head] + [(half, floor + head[-1][1]), (half, self.TOP)]
+        right = [q for i, q in enumerate(right) if q not in right[:i]]  # a dovetail meets the slot above it
+        outline = [(-20, 0), (20, 0), (20, self.TOP), *reversed(right), *((-y, z) for y, z in right), (-20, self.TOP)]
+        line = {"a": [-30, 0], "b": [30, 0], "clearance_z": self.TOP + 10, "top_z": self.TOP, "stepover": 2}
+        with tempfile.TemporaryDirectory() as tmp, camcraft() as call:
+            library = camtools.write(result, Path(tmp) / "lib.camtools")
+            prism(Path(tmp) / "part.stl", outline, 60)
+            call("load_machine", builtin="VMC 3-axis")
+            call("import_model", path=str(Path(tmp) / "part.stl"), name="part")
+            call("set_stock", box={"dx": 60, "dy": 40, "dz": self.TOP})
+            call("import_tool_library", path=str(library), mode="add", format="camtools")
+            call("add_operation", kind="Slot", name="S", tool="EM", source="part",
+                 params={**line, "width": entry_slot, "bottom_z": floor + head[-1][1], "stepdown": 3})
+            call("add_operation", kind="Slot Undercut", name="U", tool="UC", source="part",
+                 params={**line, "width": 2 * head[0][0], "neck_slot": entry_slot, "run_in": 25, "bottom_z": floor,
+                         "retract_z": self.TOP + 5, "feed": 120, "plunge_feed": 60})
+            for name in "SU":
+                call("generate", name=name)
+            report = json.loads(call("verify", name="U"))
+        self.assertEqual(report["operations"][0]["status"], "ok")
+        return {f["kind"] for f in report["findings"] if f["blocks_post"]}
+
+    T_SLOT = [(8, 0), (8, 0.093 * 25.4)]  # for the 12.7 mm head; the entry slot lets the neck by, not the shank
+
+    def test_keyseat_within_and_past_its_reach(self):
+        reach = (0.093 + 0.75) * 25.4  # 21.4 mm: head and neck
+        self.assertEqual(self.findings(keyseat(), reach - 0.2, self.T_SLOT, 10), set())
+        # held as soon as the cone to the shank is down in the slot
+        self.assertEqual(self.findings(keyseat(), reach + 0.5, self.T_SLOT, 10), {"shank_hit"})
+        self.assertEqual(self.findings(keyseat(), 35, self.T_SLOT, 10), {"shank_hit"})
+
+    def test_without_the_drawn_shank_camcraft_would_pass_it(self):
+        # why the shank is drawn: a neck alone goes as deep as you like
+        def bare(d):
+            d.pop("body")
+            d.update(holder_d=0.0, holder_len=0.0)
+        self.assertEqual(self.findings(keyseat(), 35, self.T_SLOT, 10, bare), set())
+
+    def test_dovetail_within_and_past_its_reach(self):
+        # Harvey 865916's shape at twice its size: 60 degrees included
+        e = tool("dovetail mill", unit="inches", geometry={
+            "DC": 0.5, "LCF": 0.236, "LB": 1.122, "OAL": 3, "SFDM": 0.5, "TA": 30, "RE": 0,
+            "shoulder-diameter": 0.2275, "shoulder-length": 0.236},
+            shaft={"segments": [{"height": 0.5, "lower-diameter": 0.228, "upper-diameter": 0.228},
+                                {"height": 0.136, "lower-diameter": 0.228, "upper-diameter": 0.5}]})
+        top = 5.9
+        slot = [(8, 0), (8 - top * math.tan(math.radians(30)), top)]
+        self.assertEqual(self.findings(e, 15, slot, 2 * slot[-1][0]), set())
+        self.assertEqual(self.findings(e, 25, slot, 2 * slot[-1][0]), {"shank_hit"})
 
 
 def revolved(path: Path, profile: list[tuple[float, float]], n: int = 120) -> None:

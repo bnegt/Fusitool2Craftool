@@ -13,7 +13,7 @@ from fusitool2craftool import camtools
 from fusitool2craftool.cli import main
 from fusitool2craftool.convert import (KINDS, RELEASED_MATERIALS, Options, convert, find_holder, preset_material,
                                        unsupported_category, why_not_sane)
-from fusitool2craftool.verify import verify_file
+from fusitool2craftool.verify import compare, verify_file
 from fusitool2craftool.fusion import FusionLibraryError, load_library, parse_library
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -638,6 +638,124 @@ class FileTests(unittest.TestCase):
     def test_not_a_library(self):
         with self.assertRaises(FusionLibraryError):
             parse_library('{"tools": []}')
+
+
+def keyseat(geometry=None, segments=((0.75, 0.25, 0.25), (0.21651, 0.25, 0.5)), **extra):
+    """Harvey 921350's shape: a 1/2" head on a 1/4" neck under a 1/2" shank (#27)."""
+    return tool("slot mill", unit="inches", description=extra.pop("description", "keyseat cutter"),
+                geometry={"DC": 0.5, "LCF": 0.093, "LB": 1.30951, "OAL": 3, "SFDM": 0.5, "NOF": 8,
+                          "shoulder-diameter": 0.5, "shoulder-length": 0.093, **(geometry or {})},
+                shaft={"type": "shaft", "segments": [
+                    {"height": h, "lower-diameter": lo, "upper-diameter": up} for h, lo, up in segments]}, **extra)
+
+
+class UndercutShankTests(unittest.TestCase):
+    """#27: undercut cutters whose shank is as wide as the head."""
+
+    def assert_verifies(self, result):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = camtools.write(result, Path(tmp) / "out.camtools")
+            self.assertEqual(verify_file(path, result), [])
+
+    def test_neck_is_the_narrow_start_of_the_shaft(self):
+        d, result = one(keyseat())
+        self.assertEqual(d["kind"], "keyseat")
+        for key, inches in (("diameter", 0.5), ("flute_len", 0.093), ("shank_d", 0.25), ("shank_len", 0.75)):
+            self.assertAlmostEqual(d[key], inches * 25.4, places=5)
+        z = [round((0.093 + h) * 25.4, 4) for h in (0.75, 0.96651, 1.21651)]
+        outline = [[round(v, 4) for v in q] for q in d["body"]["spun"]]
+        # neck end, cone to the shank, shank up to LB, default holder (50 x 40)
+        self.assertEqual(outline, [[z[0], 0, 0], [z[0], 3.175, 0], [z[1], 6.35, 0], [z[2], 6.35, 0],
+                                   [z[2], 25, 0], [z[2] + 40, 25, 0], [z[2] + 40, 0, 0]])
+        self.assertEqual(d["holder_d"], 50)
+        self.assertAlmostEqual(d["holder_len"], (1.30951 - 0.843) * 25.4 + 40, places=4)
+        self.assert_verifies(result)
+
+    def test_own_holder_stands_on_the_shank(self):
+        d, result = one(keyseat(holder={"unit": "millimeters", "segments": [
+            {"height": 10, "lower-diameter": 20, "upper-diameter": 30}]}))
+        self.assertEqual(d["body"]["spun"][-1], [round(1.30951 * 25.4 + 10, 6), 0, 0])
+        self.assertEqual(d["holder_d"], 30)
+        self.assert_verifies(result)
+
+    def test_shoulder_is_the_neck(self):
+        # XEBEC-style ball: a shoulder, then a cone to a wider shank
+        d, result = one(tool("lollipop mill", description="ball", geometry={
+            "DC": 1.8, "LCF": 1.612, "LB": 35, "OAL": 60, "SFDM": 3, "RE": 0.9, "shoulder-diameter": 1.1,
+            "shoulder-length": 10}, shaft={"segments": [{"height": 1.6454, "lower-diameter": 1.1, "upper-diameter": 3}]}))
+        self.assertEqual((d["shank_d"], d["shank_len"]), (1.1, 8.388))
+        self.assertEqual(d["body"]["spun"][1:4], [[10, 0.55, 0], [11.6454, 1.5, 0], [35, 1.5, 0]])
+        self.assert_verifies(result)
+
+    def test_cone_right_at_the_head(self):
+        # Harvey dovetails without a reach: never thinner than the cone
+        d, result = one(tool("dovetail mill", description="dovetail", unit="inches", geometry={
+            "DC": 0.5, "LCF": 0.218, "LB": 0.61816, "OAL": 3, "SFDM": 0.5, "TA": 30, "RE": 0,
+            "shoulder-diameter": 0.24827528, "shoulder-length": 0.218},
+            shaft={"segments": [{"height": 0, "lower-diameter": 0.248, "upper-diameter": 0.248},
+                                {"height": 0.1502, "lower-diameter": 0.248, "upper-diameter": 0.5}]}))
+        self.assertLess(d["flute_len"] + d["shank_len"] - 0.218 * 25.4, 0.0011)
+        self.assertGreater(d["shank_d"], 0.248 * 25.4)
+        self.assertEqual(d["body"]["spun"][1][1] * 2, d["shank_d"])
+        self.assertGreater(d["flute_len"], 0.218 * 25.4 * 0.99)
+        self.assert_verifies(result)
+
+    def test_neck_widest_at_its_start(self):
+        # Harvey back chamfer cutters: the neck tapers a little toward the shank
+        d, result = one(keyseat(segments=((0.5, 0.162, 0.156), (0.044, 0.156, 0.5))))
+        self.assertAlmostEqual(d["shank_d"], 0.162 * 25.4, places=5)
+        cone = 0.044 * (0.162 - 0.156) / (0.5 - 0.156)
+        self.assertAlmostEqual(d["shank_len"], (0.5 + cone) * 25.4, places=5)
+        self.assert_verifies(result)
+
+    def test_dovetail_flank_meeting_the_neck_exactly(self):
+        # 45 degrees: the limit itself misses CamCraft's rule by 1e-16
+        d, result = one(tool("dovetail mill", unit="inches", geometry={
+            "DC": 0.08, "LCF": 0.014, "LB": 0.44532, "SFDM": 0.125, "TA": 45, "RE": 0,
+            "shoulder-diameter": 0.052, "shoulder-length": 0.014},
+            shaft={"segments": [{"height": 0.375, "lower-diameter": 0.052, "upper-diameter": 0.047},
+                                {"height": 0.0365, "lower-diameter": 0.047, "upper-diameter": 0.125}]}))
+        self.assertAlmostEqual(d["flute_len"], 0.3556, places=5)
+        self.assert_verifies(result)
+
+    def test_not_stated_or_not_narrower_is_skipped(self):
+        for e in (keyseat(segments=()), keyseat(segments=((0.75, 0.5, 0.5),)),
+                  keyseat(segments=((1.5, 0.25, 0.25),)),  # longer than the body
+                  keyseat(segments=((0.75, 0, 0.25),)), keyseat({"shoulder-length": 0.2})):
+            r = convert([e])
+            self.assertEqual(r.tools, [])
+            self.assertIn("neck (shank diameter) 12.7", r.skipped[0].reason)
+
+    def test_narrow_shank_is_unchanged(self):
+        # a shank narrower than the head stays the neck over the whole body
+        d, _ = one(keyseat({"SFDM": 0.375, "shoulder-diameter": 0.375}))
+        self.assertAlmostEqual(d["shank_d"], 0.375 * 25.4)
+        self.assertAlmostEqual(d["shank_len"], (1.30951 - 0.093) * 25.4, places=5)
+        self.assertNotIn("body", d)
+
+    def test_output_check_catches_a_wrong_neck(self):
+        def spun(d, i, z=0.0, scale=1.0):
+            q = d["body"]["spun"][i]
+            d["body"]["spun"][i] = [q[0] + z, q[1] * scale, 0]
+        for change in (lambda d: d.update(shank_d=d["shank_d"] * 0.9), lambda d: d.update(shank_len=d["shank_len"] + 1),
+                       lambda d: spun(d, 2, scale=0.7), lambda d: spun(d, 3, scale=0.7), lambda d: d.pop("body")):
+            _, result = one(keyseat())
+            d = result.tools[0]["definition"]
+            change(d)
+            if "body" in d:
+                self.assertNotEqual(compare(d, keyseat(), Options()), [])
+            else:  # --holder-cylinders: the cylinder still has to cover the shank
+                self.assertEqual(compare(d, keyseat(), Options(holder_bodies=False)), [])
+                d["holder_len"] = 40.0
+                self.assertNotEqual(compare(d, keyseat(), Options(holder_bodies=False)), [])
+
+    def test_corner_radius_dovetail_is_skipped(self):
+        e = tool("dovetail mill", geometry={"DC": 20, "LCF": 5, "SFDM": 8, "LB": 30, "TA": 45, "RE": 1})
+        r = convert([e])
+        self.assertIn("flank 1.41 mm inside the real one", r.skipped[0].reason)
+        self.assertEqual(r.skipped[0].category, "corner radius dovetail mill")
+        d, _ = one({**e, "geometry": {**e["geometry"], "RE": 0}})
+        self.assertTrue(any("corner radius" in p for p in compare(d, e)))
 
 
 class SkipCategoryTests(unittest.TestCase):

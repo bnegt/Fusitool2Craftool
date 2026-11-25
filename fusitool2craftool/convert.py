@@ -244,6 +244,8 @@ def unsupported_category(entry: dict) -> str | None:
         return "roundover bit"
     if ftype == "radius mill":
         return "roundover bit"
+    if ftype == "dovetail mill" and re_ and re_ > 0:
+        return "corner radius dovetail mill"
     if ftype.startswith("turning "):
         from . import lathe
         return lathe.category(entry)
@@ -378,8 +380,11 @@ def convert_tool(entry: dict, options: Options, presets_report: Counter | None =
     if ftype == "corner chamfer end mill":
         _corner_chamfer(d, g, length, warnings)
 
+    # the shank under the holder that is wider than CamCraft's one shank
+    # cylinder: (height, lower, upper diameter) from the neck up, in mm
+    below: list[tuple[float, float, float]] = []
     if kind in UNDERCUT:
-        _undercut(d, entry, length, body, warnings)
+        below = _undercut(d, entry, length, body, warnings)
 
     if kind == "taper":
         if ftype == "chamfer mill":
@@ -430,16 +435,15 @@ def convert_tool(entry: dict, options: Options, presets_report: Counter | None =
         entry = {**entry, "holder": options.default_holder}
         warnings.append(f"no holder in Fusion: default holder '{holder_name(options.default_holder)}' used")
     d["holder_d"], d["holder_len"] = _holder(entry, options, warnings)
-    below: tuple[float, float] | None = None  # the shank under the holder, as (length, diameter)
     default_holder: tuple[float, float] | None = None
     if kind == "thread_mill_single":
         below = _single_form_neck(d, length, body, warnings)
-        if below:
-            # CamCraft stacks one shank cylinder and the holder: the shank is
-            # the neck, so the real shank joins the holder above it.
-            default_holder = (d["holder_len"], d["holder_d"])
-            d["holder_len"] += below[0]
-            d["holder_d"] = max(d["holder_d"], below[1])
+    if below:
+        # CamCraft stacks one shank cylinder and the holder: the shank is
+        # the neck, so the real shank joins the holder above it.
+        default_holder = (d["holder_len"], d["holder_d"])
+        d["holder_len"] += sum(h for h, _, _ in below)
+        d["holder_d"] = max([d["holder_d"]] + [v for _, lo, up in below for v in (lo, up)])
 
     nof = _num(g.get("NOF"))
     # teeth for --default-fz: Fusion's own count, also past CamCraft's 32-flute
@@ -644,12 +648,13 @@ def _corner_chamfer(d: dict, g: dict, length, warnings: list[str]) -> None:
                     f"{d['corner_r']:.4g} mm, never smaller than the real cutter: rest material is understated")
 
 
-def _single_form_neck(d: dict, length, body: float | None, warnings: list[str]) -> tuple[float, float] | None:
+def _single_form_neck(d: dict, length, body: float | None, warnings: list[str]) -> list[tuple[float, float, float]]:
     """Narrow ``d``'s shank to the neck of a single-form thread mill (#16).
 
     The neck runs from the tooth to Fusion's ``shoulder-length`` (from the
-    tip). Returns the shank above it as (length, diameter), or None when the
-    tool has no reach below its shank: the shank then starts at the tooth.
+    tip). Returns the shank above it as (height, lower, upper diameter), or
+    nothing when the tool has no reach below its shank: the shank then
+    starts at the tooth.
 
     Without a ``shoulder-diameter`` the neck is the tooth root at the
     coarsest pitch. It can't be wider: the tool could not cut that thread
@@ -657,32 +662,99 @@ def _single_form_neck(d: dict, length, body: float | None, warnings: list[str]) 
     """
     shank_d, reach = d["shank_d"], length("shoulder-length")
     if body is None or not reach or not d["flute_len"] < reach < body:
-        return None
+        return []
     neck = length("shoulder-diameter")
     stated = bool(neck and neck > 0)
     if not stated:
         neck = d["diameter"] - 2 * INTERNAL_DEPTH_PER_PITCH * d["pitch"]
     if not 0 < neck < shank_d:
-        return None
+        return []
     if not stated:
         warnings.append(f"no neck diameter (shoulder-diameter): {neck:.4g} mm, the tooth root at the coarsest pitch")
     d["shank_d"], d["shank_len"] = neck, reach - d["flute_len"]
-    return body - reach, shank_d
+    return [(body - reach, shank_d, shank_d)]
 
 
-def _undercut(d: dict, entry: dict, length, body: float | None, warnings: list[str]) -> None:
+def _shaft_above(entry: dict, length, body: float | None) -> list[tuple[float, float, float]]:
+    """Fusion's shoulder, shaft segments and shank from the flute top to the body's end.
+
+    As (height, lower, upper diameter) in mm, or nothing if Fusion does not
+    state all of it. Vendors that print the neck length in the tool's name
+    print the first shaft segment's height (#27).
+    """
+    lcf, shank = length("LCF"), length("SFDM")
+    shoulder, shoulder_d = length("shoulder-length") or 0.0, length("shoulder-diameter")
+    if body is None or not lcf or not shank:
+        return []
+    scale = _unit_scale(entry.get("unit"))
+    out, z = [], lcf
+    if shoulder > lcf + 1e-6:
+        if not shoulder_d:
+            return []
+        out.append((shoulder - lcf, shoulder_d, shoulder_d))
+        z = shoulder
+    shaft = entry.get("shaft")
+    for seg in (shaft.get("segments") if isinstance(shaft, dict) else None) or []:
+        h, lo, up = (_num(seg.get(k)) for k in ("height", "lower-diameter", "upper-diameter"))
+        if h is None or h < 0 or not lo or not up or min(lo, up) <= 0:
+            return []
+        out.append((h * scale, lo * scale, up * scale))
+        z += h * scale
+    if z > body + 1e-6:
+        return []
+    if body - z > 1e-6:
+        out.append((body - z, shank, shank))
+    return out
+
+
+def _split_neck(shaft: list[tuple[float, float, float]]) -> tuple[float, float, list[tuple[float, float, float]]]:
+    """The neck a shaft starts with, as (diameter, length), and the rest above it.
+
+    The neck is a cylinder around the shaft as far as it stays that narrow.
+    A shaft that widens right from the head has no neck: its first
+    ``MIN_NECK`` is taken for one, at the width it has there.
+    """
+    neck, z = 0.0, 0.0
+    for h, lo, up in shaft:
+        if z >= MIN_NECK:
+            break
+        part = min(h, MIN_NECK - z)
+        neck = max(neck, lo, lo + (up - lo) * part / h if h > 0 else up)
+        z += h
+    reach = 0.0
+    for i, (h, lo, up) in enumerate(shaft):
+        if max(lo, up) > neck + 1e-9:
+            t = max(neck - lo, 0.0) / (up - lo) if lo <= neck + 1e-9 else 0.0
+            head = (h * (1 - t), max(lo, neck) if t else lo, up)
+            return neck, reach + h * t, [head, *shaft[i + 1:]]
+        reach += h
+    return neck, reach, []
+
+
+def _undercut(d: dict, entry: dict, length, body: float | None,
+              warnings: list[str]) -> list[tuple[float, float, float]]:
     """Head and neck of a slot mill / slitting saw or a lollipop.
 
     CamCraft reads ``flute_len`` as the head height (where the neck
     starts), ``shank_d`` as the neck diameter and ``shank_len`` as the neck
-    length; nothing wider is modelled above the neck. So the neck takes the
-    wider of Fusion's shaft and shoulder diameters, which can only shorten
-    the reach CamCraft allows, never let the body pass where it would hit.
+    length. So the neck takes the wider of Fusion's shaft and shoulder
+    diameters, which can only shorten the reach CamCraft allows, never let
+    the body pass where it would hit.
+
+    Where that is as wide as the head, the neck is the narrow start of
+    Fusion's shaft (#27). Returns the rest of the shaft, which then has to
+    be drawn under the holder: CamCraft judges it there.
     """
+    above: list[tuple[float, float, float]] = []
     necks = [v for v in (length("SFDM"), length("shoulder-diameter")) if v and v > 0]
     if not necks:
         raise ToolRefused("no neck diameter (SFDM / shoulder-diameter)")
     d["shank_d"] = max(necks)
+    if d["shank_d"] >= d["diameter"]:
+        shaft = _shaft_above(entry, length, body)
+        neck, reach, rest = _split_neck(shaft)
+        if rest and 0 < neck < d["diameter"]:
+            d["shank_d"], body, above = neck, d["flute_len"] + reach, rest
     desc = str(entry.get("description", "")).lower()
     if d["kind"] == "t_slot" and ("keyseat" in desc or "woodruff" in desc):
         d["kind"] = "keyseat"
@@ -693,13 +765,25 @@ def _undercut(d: dict, entry: dict, length, body: float | None, warnings: list[s
         ta = _num((entry.get("geometry") or {}).get("TA"))
         if ta is None or not 0 < ta < 90:
             raise ToolRefused(f"dovetail taper angle (TA) {ta} must be over 0 and under 90 degrees")
+        corner = length("RE") or 0.0
+        if corner > 0:
+            # Fusion's DC is the widest point, at the top of the radius; the
+            # flank starts there. CamCraft's starts at the tip, so all of it
+            # would be too thin: CamCraft would not see the real one gouge.
+            a = math.radians(ta)
+            thin = corner * ((1 + math.sin(a)) / math.cos(a) - 1)
+            raise ToolRefused(f"corner radius {corner:.4g} mm: CamCraft's dovetail has a sharp corner, which puts "
+                              f"its flank {thin:.3g} mm inside the real one")
         d["tip_angle"] = round(90.0 - ta, 6)
         if d["shank_d"] < d["diameter"]:
             # Fusion gives the shank, not the neck under the head: where the
             # flank narrows to that diameter the head is capped, so CamCraft
             # sees a shallower cutter and a body no narrower than the real one.
             r, sr = round(d["diameter"], 6) / 2, round(d["shank_d"], 6) / 2
-            top = math.floor((r - sr) * math.tan(math.radians(d["tip_angle"])) * 1e6) / 1e6
+            tan = math.tan(math.radians(d["tip_angle"]))
+            top = math.floor((r - sr) * tan * 1e6) / 1e6
+            if r - top / tan < sr:  # CamCraft's rule has no slack, and the limit itself can miss it by 1e-16
+                top = round(top - 1e-6, 6)
             if d["flute_len"] > top:
                 warnings.append(f"head height {d['flute_len']:g} mm capped at {top:g} mm, where the "
                                 f"{ta:g} degree flank narrows to the {d['shank_d']:g} mm neck")
@@ -716,6 +800,7 @@ def _undercut(d: dict, entry: dict, length, body: float | None, warnings: list[s
             d["flute_len"] = meet
     if body is not None:
         d["shank_len"] = max(body - d["flute_len"], 0.0)
+    return above
 
 
 def _version_for(d: dict) -> int:
@@ -790,12 +875,13 @@ def _clean_text(v, limit: int) -> str | None:
 # CamCraft's drawn-profile rules (crates/tools/src/spun.rs, v0.25.0)
 SPUN_MAX_POINTS = 64
 SPUN_MIN_SEGMENT = 0.01      # mm; we merge below twice that, rounding-safe
+MIN_NECK = 0.001             # mm; CamCraft needs a neck length over 0
 SPUN_MAX_HEIGHT = 2000.0     # MAX_BODY_HEIGHT
 SPUN_MAX_RADIUS = 500.0      # MAX_BODY_RADIUS
 SPUN_SOURCE = "drawn profile"
 
 
-def holder_outline(entry: dict, base: float, below: tuple[float, float] | None = None,
+def holder_outline(entry: dict, base: float, below: list[tuple[float, float, float]] | None = None,
                    default: tuple[float, float] | None = None) -> tuple[list[list[float]] | None, str]:
     """A Fusion holder's segments as CamCraft ``spun`` points ``[z, r, 0]``.
 
@@ -805,9 +891,9 @@ def holder_outline(entry: dict, base: float, below: tuple[float, float] | None =
     closes to the axis at the top: all straight lines, so CamCraft reads it
     exactly. Points closer than 0.02 mm merge keeping the larger radius, so
     the drawn holder is never thinner than Fusion's. ``below`` is a shank
-    (length, diameter) drawn under the holder, and ``default`` the holder
-    cylinder above it when Fusion has none, both in mm. Returns the points,
-    or None and why they cannot be drawn.
+    (height, lower, upper diameter) drawn under the holder, and ``default``
+    the holder cylinder (height, diameter) above it when Fusion has none,
+    all in mm. Returns the points, or None and why they cannot be drawn.
     """
     holder = entry.get("holder")
     segs = holder.get("segments") if isinstance(holder, dict) else None
@@ -817,7 +903,8 @@ def holder_outline(entry: dict, base: float, below: tuple[float, float] | None =
     if not segs:
         return None, "no holder segments"
     if below:
-        segs = [_cylinder(below[0] / scale, below[1] / scale)] + list(segs)
+        segs = [{"height": h / scale, "lower-diameter": lo / scale, "upper-diameter": up / scale}
+                for h, lo, up in below] + list(segs)
     z = base
     raw = [(z, 0.0)]
     for i, seg in enumerate(segs, 1):
@@ -863,7 +950,8 @@ def _collinear(a, b, c) -> bool:
         (b[0] - a[0]) * (c[0] - b[0]) + (b[1] - a[1]) * (c[1] - b[1]) > 0
 
 
-def holder_body(entry: dict, base: float, warnings: list[str], below: tuple[float, float] | None = None,
+def holder_body(entry: dict, base: float, warnings: list[str],
+                below: list[tuple[float, float, float]] | None = None,
                 default: tuple[float, float] | None = None) -> dict | None:
     """The CamCraft ``body`` for a Fusion holder: a drawn ``spun`` outline.
 

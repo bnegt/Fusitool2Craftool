@@ -6,10 +6,10 @@ download them into `private/test-libraries/` (git-ignored). The tests then
 convert and verify every one of them (`PrivateLibraryTests` in
 `tests/test_convert.py`).
 
-Last checked 2026-11-25 (with default speeds): 64 libraries convert, 132,392
+Last checked 2026-11-25 (with default speeds): 64 libraries convert, 134,384
 tools written, all verified and accepted by CamCraft 0.26.0 (with and without
-`--all-presets`): 24 of the sources below with 7,678 tools, and 40 of
-[Autodesk's vendor libraries](#autodesks-vendor-libraries) with 124,714. The
+`--all-presets`): 24 of the sources below with 7,677 tools, and 40 of
+[Autodesk's vendor libraries](#autodesks-vendor-libraries) with 126,707. The
 others convert to nothing: `OMAX.json` (one waterjet), three holder libraries
 and two probe libraries.
 
@@ -69,7 +69,7 @@ gives none), "With defaults" uses the tests' default speeds:
 |---|---|---|---|---|
 | Harvey Tool/End Mills | 11,937 | 11,449 | 11,449 | flat end mill, ball end mill, bull nose end mill |
 | Harvey Tool/Holemaking and Threading | 3,959 | 2,170 | 2,170 | drill, form mill, spot drill |
-| Harvey Tool/Specialty Profiles | 7,866 | 3,355 | 3,355 | slot mill, chamfer mill, form mill |
+| Harvey Tool/Specialty Profiles | 7,866 | 5,285 | 5,285 | slot mill, chamfer mill, form mill |
 | Helical Solutions/End Mills | 6,007 | 6,007 | 6,007 | bull nose end mill, flat end mill, ball end mill |
 | Helical Solutions/Specialty Profiles | 190 | 185 | 185 | chamfer mill, spot drill |
 | BitsBits/BitsBits Cutting Tools | 62 | 50 | 50 | flat end mill, tapered mill, ball end mill |
@@ -81,7 +81,7 @@ gives none), "With defaults" uses the tests' default speeds:
 | Haas Tooling/Haas Holders | 404 | 0 | 0 | holder |
 | Haimer/Haimer Holders | 557 | 0 | 0 | holder |
 | SwiftCARB/End Mills | 23,574 | 23,571 | 23,571 | bull nose end mill, flat end mill, ball end mill |
-| DATRON/DATRON Cutting Tools | 1,003 | 923 | 923 | flat end mill, drill, chamfer mill |
+| DATRON/DATRON Cutting Tools | 1,003 | 938 | 938 | flat end mill, drill, chamfer mill |
 | Delta Tools/HPC Endmill Solid Carbide | 154 | 154 | 154 | flat end mill, bull nose end mill |
 | Destiny Tool/Destiny Tool | 1,791 | 0 | 1,791 | flat end mill, bull nose end mill, ball end mill |
 | Renishaw/Renishaw - OMP Probes | 16 | 0 | 0 | probe |
@@ -104,7 +104,7 @@ gives none), "With defaults" uses the tests' default speeds:
 | Iscar/Iscar Solid End Mills Metric | 2,564 | 2,564 | 2,564 | bull nose end mill, flat end mill, ball end mill |
 | Fraiser Tools/Boss Beaver | 123 | 119 | 119 | flat end mill, drill, chamfer mill |
 | Fraiser Tools/Carbider Poly | 114 | 114 | 114 | flat end mill, chamfer mill, face mill |
-| XEBEC/XEBEC Deburring tools | 42 | 9 | 9 | lollipop mill |
+| XEBEC/XEBEC Deburring tools | 42 | 42 | 42 | lollipop mill |
 | Schunk/Schunk Holders | 642 | 0 | 0 | holder |
 | Kennametal/Turning Imperial/Turning Imperial | 57 | 55 | 55 | turning general, turning boring, turning grooving |
 | Kennametal/Turning Metric/Turning Metric | - | - | - | not available |
@@ -114,17 +114,18 @@ gives none), "With defaults" uses the tests' default speeds:
 | Sandvik Coromant/Turning Metric/Turning Metric | 243 | 240 | 240 | turning general, turning boring, turning grooving |
 | Iscar/Turning Imperial/Turning Imperial | 71 | 71 | 71 | turning general, turning boring, turning grooving |
 | Iscar/Turning Metric/Turning Metric | 106 | 106 | 106 | turning general, turning boring, turning grooving |
-| Mitsubishi Materials/Solid End Mills | 3,248 | 3,225 | 3,225 | flat end mill, ball end mill, bull nose end mill |
+| Mitsubishi Materials/Solid End Mills | 3,248 | 3,240 | 3,240 | flat end mill, ball end mill, bull nose end mill |
 | Ingersoll/Turning Imperial/Turning Imperial | - | - | - | not available |
 | Ingersoll/Turning Metric/Turning Metric | - | - | - | not available |
 | Widia/Turning Imperial/Turning Imperial | - | - | - | not available |
 | Widia/Turning Metric/Turning Metric | - | - | - | not available |
-| **Total** | **134,498** | **65,218** | **124,714** | |
+| **Total** | **134,498** | **67,211** | **126,707** | |
 
-The tools skipped even with defaults, by reason: form mill 3,023; undercut
-cutter whose shank is as wide as or wider than its head 2,368, or without a
-neck length 110; tapered mill 925; reamer 876; counterbore 434; radius mill
-270; drill with a point of 60 degrees or less 119; probe 22; other 17.
+The tools skipped even with defaults, by reason: form mill 3,023; tapered mill
+925; reamer 876; counterbore 434; dovetail with a corner radius 372; radius
+mill 270; drill with a point of 60 degrees or less 119; undercut cutter without
+a neck length 110, or without a neck narrower than the head 3; probe 22; other
+17.
 
 ## Fusion tool types covered
 
