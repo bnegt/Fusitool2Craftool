@@ -9,7 +9,7 @@ from collections import Counter
 from pathlib import Path
 
 from . import __version__, camtools
-from .convert import DEFAULT_KINDS, MATERIALS, RELEASED_MATERIALS, UNRELEASED_MATERIALS, Options, convert
+from .convert import DEFAULT_KINDS, MATERIALS, RELEASED_MATERIALS, UNRELEASED_MATERIALS, Options, convert, find_holder
 from .fusion import FusionLibraryError, load_library
 from .push import MODES, PushError, push
 from .verify import verify_file
@@ -70,6 +70,11 @@ def build_parser() -> argparse.ArgumentParser:
                       help="holder diameter for tools without a Fusion holder (default 50)")
     conv.add_argument("--holder-len", type=float, default=40.0, metavar="MM",
                       help="holder length for tools without a Fusion holder (default 40)")
+    conv.add_argument("--default-holder", metavar="NAME",
+                      help="stand-alone Fusion holder (its description or product id) for tools without "
+                           "a holder, drawn at each tool's own stick-out; beats --holder-d/--holder-len")
+    conv.add_argument("--holders", type=Path, metavar="PATH",
+                      help="Fusion library, or folder of them, to find --default-holder in (default: the input)")
     dflt = p.add_argument_group(
         "defaults for tools Fusion gives no speed or feed",
         "Each takes a number for every tool, or KIND=number for one CamCraft kind "
@@ -111,7 +116,16 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as e:
         print(red(f"error: {e}"), file=sys.stderr)
         return 1
+    if args.holders and not args.default_holder:
+        print(red("error: --holders needs --default-holder NAME"), file=sys.stderr)
+        return 1
+    try:
+        default_holder = load_holder(args) if args.default_holder is not None else None
+    except (FusionLibraryError, ValueError) as e:
+        print(red(f"error: {e}"), file=sys.stderr)
+        return 1
     options = Options(
+        default_holder=default_holder,
         **defaults,
         holder_bodies=not args.holder_cylinders,
         preset=args.preset,
@@ -148,6 +162,20 @@ def parse_defaults(args) -> dict:
             else:
                 out[f"default_{field}"] = number
     return out
+
+
+def load_holder(args) -> dict:
+    """The Fusion holder --default-holder names, from --holders or the input."""
+    source = args.holders or args.input
+    entries: list[dict] = []
+    for path in library_files(source) if source.is_dir() else [source]:
+        try:
+            entries += load_library(path)
+        except FusionLibraryError:
+            if not source.is_dir():
+                raise
+            # a folder's broken library is reported when it is converted
+    return find_holder(args.default_holder, entries)
 
 
 def library_files(folder: Path) -> list[Path]:
@@ -227,7 +255,8 @@ def convert_file(src: Path, output: Path, args, options: Options, quiet_empty: b
         print(f"defaults: {n} {plural('tool', n)} got {how}")
     if result.holders:
         print(f"{result.holders} {plural('holder', result.holders)} not converted "
-              f"(CamCraft imports no stand-alone holders; a tool's own holder is kept as its holder size)")
+              f"(CamCraft has no import for stand-alone holders; a tool's own holder is kept, "
+              f"and --default-holder uses one for tools without)")
     if args.strict and result.skipped:
         print(red(f"error: {len(result.skipped)} tool(s) could not be converted (--strict)"), file=sys.stderr)
         return FAILED

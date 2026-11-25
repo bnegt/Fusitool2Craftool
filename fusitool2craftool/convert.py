@@ -149,6 +149,8 @@ class Options:
     """Holder diameter (mm) for tools without a holder in Fusion."""
     holder_len: float = 40.0
     """Holder length (mm) for tools without a holder in Fusion."""
+    default_holder: dict | None = None
+    """Stand-alone Fusion holder for tools without one (#14); beats holder_d / holder_len."""
     holder_bodies: bool = True
     """Write a Fusion holder's segments as a drawn CamCraft holder body (#12)."""
     default_rpm: float | None = None
@@ -391,6 +393,9 @@ def convert_tool(entry: dict, options: Options, presets_report: Counter | None =
         d["pitch_min"] = length("TPN") or lcf
         d["tip_angle"] = _num(g.get("thread-profile-angle")) or 60.0
 
+    if options.default_holder and not _has_holder(entry):
+        entry = {**entry, "holder": options.default_holder}
+        warnings.append(f"no holder in Fusion: default holder '{holder_name(options.default_holder)}' used")
     d["holder_d"], d["holder_len"] = _holder(entry, options, warnings)
     below: tuple[float, float] | None = None  # the shank under the holder, as (length, diameter)
     default_holder: tuple[float, float] | None = None
@@ -815,6 +820,43 @@ def holder_body(entry: dict, base: float, warnings: list[str], below: tuple[floa
         warnings.append(f"holder kept as a cylinder: {why}")
         return None
     return {"source": SPUN_SOURCE, "facets": [], "spun": points}
+
+
+def _has_holder(entry: dict) -> bool:
+    """Does the tool carry a Fusion holder with a size (what _holder reads)?"""
+    holder = entry.get("holder")
+    segs = holder.get("segments") if isinstance(holder, dict) else None
+    return bool(segs) and any((_num(s.get(k)) or 0.0) > 0 for s in segs for k in ("lower-diameter", "upper-diameter")) \
+        and sum(_num(s.get("height")) or 0.0 for s in segs) > 0
+
+
+def holder_name(holder: dict) -> str:
+    return _clean_text(holder.get("description"), MAX_SHORT * 2) or _clean_text(holder.get("product-id"), MAX_SHORT) or ""
+
+
+def find_holder(name: str, entries: list[dict]) -> dict:
+    """The stand-alone Fusion holder called ``name`` (description or product id, any case).
+
+    Raises ValueError when there is none, when two of that name differ in
+    shape, or when CamCraft could not draw it.
+    """
+    holders = [e for e in entries if e.get("type") == "holder"]
+    want = name.strip().lower()
+    hits = [h for h in holders if holder_name(h).lower() == want] or [
+        h for h in holders if (_clean_text(h.get("product-id"), MAX_SHORT) or "").lower() == want]
+    if not want or not hits:
+        names = sorted({holder_name(h) for h in holders} - {""})
+        listed = "; holders there: " + ", ".join(f"'{n}'" for n in names) if names else " (no holders there)"
+        raise ValueError(f"no stand-alone holder named '{name}'{listed}")
+    shapes = [holder_outline({"holder": h}, 0.0) for h in hits]
+    for points, why in shapes:
+        if points is None:
+            raise ValueError(f"holder '{name}' cannot be drawn in CamCraft: {why}")
+    if any(points != shapes[0][0] for points, _ in shapes):
+        raise ValueError(f"{len(hits)} holders named '{name}' have different shapes: rename one in Fusion, "
+                         f"or name the library with --holders")
+    # without a unit of its own it would be read in each tool's unit
+    return hits[0] if hits[0].get("unit") else {**hits[0], "unit": "millimeters"}
 
 
 def _holder(entry: dict, options: Options, warnings: list[str]) -> tuple[float, float]:

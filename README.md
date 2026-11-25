@@ -207,6 +207,8 @@ This runs `camcraft-cli mcp --connect 127.0.0.1:7777` and calls CamCraft's
 | `--all-presets` | also write one cutting data row per Fusion preset whose name names a CamCraft material (see [Cutting data per material](#cutting-data-per-material)) |
 | `--unreleased-materials` | allow material words that are only on CamCraft's main, which its latest release refuses (none at the moment) |
 | `--holder-d MM`, `--holder-len MM` | holder size for tools with no holder in Fusion (default 50 x 40) |
+| `--default-holder NAME` | a stand-alone Fusion holder (its description or product id) for tools with no holder in Fusion, drawn at each tool's own stick-out; beats `--holder-d` / `--holder-len` |
+| `--holders PATH` | the Fusion library, or folder of them, `--default-holder` is in (default: the input) |
 | `--holder-cylinders` | write Fusion holders as one cylinder instead of their drawn outline |
 | `--default-rpm [KIND=]RPM`, `--default-feed [KIND=]MM_MIN` | speed / feed for tools Fusion gives none (otherwise skipped); see [Default speeds](#default-speeds) |
 | `--default-vc [KIND=]M_MIN`, `--default-fz [KIND=]MM` | the same from cutting speed and chip load: rpm = v_c x 1000 / (pi x D), feed = rpm x flutes x f_z |
@@ -292,7 +294,8 @@ This runs `camcraft-cli mcp --connect 127.0.0.1:7777` and calls CamCraft's
   `--material` is given). With `--all-presets` every preset can become a
   row of its own, see below.
 - Stand-alone holders: holder entries (and holder-only libraries) are
-  counted and reported, not converted. CamCraft 0.26.0's holder library is
+  counted and reported, not converted on their own; `--default-holder` draws
+  one on every tool that has no holder. CamCraft 0.26.0's holder library is
   built in (BT, CAT, ER, TTS) and `.camtools` carries tools only.
 - Vendor, product id, product link, flute count, tool material (HSS/carbide)
   and the Fusion tool number are carried over.
