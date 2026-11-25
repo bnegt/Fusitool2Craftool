@@ -10,7 +10,7 @@ one go is included.
 
 Pure Python 3.10+, no dependencies. For **CamCraft 0.26.0 or newer**; older
 versions may refuse a library. Tested against CamCraft 0.26.0: all
-7,585 tools converted from 22 real libraries import without a change (see
+7,682 tools converted from 25 real libraries import without a change (see
 [Testing against CamCraft](#testing-against-camcraft)).
 
 ## How to run
@@ -230,6 +230,7 @@ This runs `camcraft-cli mcp --connect 127.0.0.1:7777` and calls CamCraft's
 | boring bar | `bore` |
 | slot mill, slitting saw | `t_slot` (`keyseat` if the name says keyseat/Woodruff) |
 | lollipop mill | `lollipop` |
+| turning general / boring / grooving / threading | `turning` / `bore` / `groove` / `thread` (see [Lathe tools](#lathe-tools)) |
 | dovetail mill | `dovetail` (angle 90 - `TA`: Fusion measures off the axis, CamCraft off the bottom face) |
 
 - Inch libraries are converted to mm (CamCraft only reads mm).
@@ -325,6 +326,40 @@ The first preset for a material wins. Every preset that does not become a
 row is listed with the reason (`unmatched`, `duplicate <material>`,
 `no speeds`, or needs a newer CamCraft), counted over the library.
 
+### Lathe tools
+
+| Fusion | CamCraft |
+|---|---|
+| nose radius `RE` (round insert: `INSD` / 2) | `nose_radius` (turning, boring) |
+| `tool_grooveWidth`, the cutting width | blade `width` (`tool_insertWidth` is the body behind the edge) |
+| `TP`, 60 degree form | thread V `width` = 0.866 x `TP`, `tip_angle` 60 |
+| holder `W` x `H`, head `LH` | shank diameter (the larger), length of the head |
+| surface speed `v_c`, feed per turn `f_n` | `turning` data: G96 and feed per turn |
+| hand, with the usual mounting | `orientation` 2 (right) / 1 (left), 3 for a right hand bar |
+
+- **Speeds:** a lathe preset has no rpm, and CamCraft wants one, so rpm and
+  feed are written for a 50 mm work diameter (`--turning-d`). CamCraft posts
+  the surface speed and the feed per turn; `--max-rpm` also becomes the tool's
+  rpm limit. Threads run at a constant rpm, one pitch per turn. Presets become
+  no material rows: a row holds an rpm. A feed of 0.8 mm per turn or more is
+  warned about: Fusion's untouched preset is 1 mm.
+- **Boring bars:** the tip stands `CW` from the bar's axis, so the bar reaches
+  `CW + W/2` across. CamCraft's bar has no offset, so head and shank are both
+  written that wide: the smallest body that covers the real bar, and CamCraft
+  then refuses a hole it cannot enter. Fusion has no stick-out, so the whole
+  bar's length is written, with a warning. It can trip a machine's tool length
+  limit: set the real one in CamCraft.
+- **Outside tools** end at their head; the turret clamps the shank. CamCraft
+  judges their cut by the nose, blade or V, not by the insert's outline or the
+  holder. Nothing warns if an insert's flank or the holder would rub.
+- **Orientation** is left to CamCraft (2, or 3 for a bar), with a warning, for
+  neutral tools, left hand bars, other angles, a reversed spindle or another
+  compensation point than Fusion's tip tangent. A blade's touch-off corner is
+  always CamCraft's default: check it ([#20](https://github.com/bnegt/Fusitool2Craftool/issues/20)).
+- A blade's corner radius is not written (CamCraft's blade is square), with a
+  warning. A partial profile threading insert is written for its `TP`, with a
+  warning if Fusion states a larger pitch.
+
 ### Default speeds
 
 Vendor catalogs often have no presets. Without help those tools are
@@ -335,11 +370,12 @@ skipped; with defaults they get speeds, by kind and by size:
 | `--default-rpm 18000` / `--default-feed 1000` | one value for every tool |
 | `--default-vc 150` | rpm = v_c x 1000 / (pi x D): a 0.5 mm end mill spins far faster than a 25 mm one |
 | `--default-fz 0.03` | feed = rpm x flutes x f_z, using Fusion's flute (tooth) count |
+| `--turning-d 50` | work diameter for a lathe tool's rpm, from Fusion's surface speed or `--default-vc` |
 | `--max-rpm 24000` | caps an rpm computed from `--default-vc` (an explicit `--default-rpm` is not capped) |
 | `KIND=value` on any of them | that kind only, e.g. `--default-vc drill=60 --default-feed drill=150`; repeat per kind |
 
 Kinds are CamCraft's: `end_mill`, `ball_nose`, `bull_nose`, `drill`, `tap`,
-`taper`, `thread_mill`, `thread_mill_single`, `bore`, `t_slot`, `keyseat`, `lollipop`, `dovetail`.
+`taper`, `thread_mill`, `thread_mill_single`, `bore`, `turning`, `groove`, `thread`, `t_slot`, `keyseat`, `lollipop`, `dovetail`.
 Order for a missing value: the kind's own default beats the global one, and
 at each level an explicit rpm/feed beats v_c/f_z. A tap always feeds
 rpm x pitch. A value Fusion does state is never replaced. Every tool that
@@ -357,7 +393,9 @@ values, not cutting data.
 | roundover bit (ball end mill with radius > D/2) | CamCraft has no form/roundover cutter |
 | reamer, counterbore | CamCraft has no kind for them ([NeoTech/Camcraft#897](https://github.com/NeoTech/Camcraft/issues/897)) |
 | form mill | CamCraft has no custom-profile mill (its `Form` kind is a lathe form gauge) |
-| lathe tools, probes, engraving | not mapped yet |
+| internal and face grooving, round grooving, internal threading tools | CamCraft's blade and threading insert are outside tools, and its blade is square |
+| threading tools without a pitch (`TP`) or with a form other than 60 degrees | no known V width ([#20](https://github.com/bnegt/Fusitool2Craftool/issues/20)) |
+| probes, engraving | not mapped yet |
 | milling or drilling tools without a flute length (`LCF`) | nothing else Fusion states gives the cutting length: CamCraft would think the tool cuts along `shoulder-length`, `LB` or `OAL`, and could bury the shank or neck. Give the tool a flute length in Fusion. Single-form thread mills are the exception: their tooth height follows from the pitch |
 | tools without rpm/feed | skipped unless a [default](#default-speeds) is given |
 
@@ -393,8 +431,9 @@ into `private/test-libraries/`.
 `tests/test_camcraft_live.py` imports converted libraries into a real,
 headless CamCraft: the sample fixture, an edge-case library (inch units,
 left-hand tap, drill/tap feeds, legacy presets, material rows, thread mills,
-corner chamfers, chamfer, face mill, boring bar) and every library in `private/`. Every tool
-written must come back as added, none renamed or skipped. It runs when
+corner chamfers, chamfer, face mill, boring bar, lathe tools) and every
+library in `private/`. Every tool written must come back as added, none
+renamed or skipped. It runs when
 `camcraft-cli` is on `PATH` or `CAMCRAFT_CLI` points at it, and is skipped
 otherwise:
 
@@ -403,14 +442,16 @@ CAMCRAFT_CLI=~/camcraft-0.26.0-linux-x86_64/camcraft-cli \
     python3 -m unittest discover -s tests -t .
 ```
 
-Last run (CamCraft 0.26.0, 2026-11-25): 22 libraries, 7,585 tools written
-with default speeds (7,517 without), all imported, none renamed or skipped,
+Last run (CamCraft 0.26.0, 2026-11-25): 25 libraries, 7,682 tools written
+with default speeds (7,613 without), all imported, none renamed or skipped,
 with and without `--all-presets` (11,269 material rows).
 
-The live tests also generate a real thread in CamCraft with a converted
-single-form thread mill: it must verify clean within the reach, and be held
-for a shank collision deeper than the reach, or with the plain shank. A shank no wider than the teeth is not caught by CamCraft past the
-reach, so mind the `shoulder-length` there.
+Converted lathe tools turn, bore, groove and thread a part in CamCraft, and
+a boring bar is held in a hole it does not fit. The live tests also generate
+a real thread in CamCraft with a converted single-form thread mill: it must
+verify clean within the reach, and be held for a shank collision deeper than
+the reach, or with the plain shank. A shank no wider than the teeth is not
+caught by CamCraft past the reach, so mind the `shoulder-length` there.
 
 ### CamCraft upstream check
 
@@ -436,6 +477,7 @@ raises GitHub's rate limit.
 |---|---|
 | `fusion.py` | read `.tools` (zip or plain JSON) and `.json` libraries |
 | `convert.py` | map Fusion tools to CamCraft definitions, apply CamCraft's sanity rules |
+| `lathe.py` | the same for lathe tools |
 | `camtools.py` | write the `.camtools` envelope |
 | `verify.py` | read the written file back and compare it with the Fusion source |
 | `push.py` | import into CamCraft through `camcraft-cli mcp` (`--push`, `--check`) |

@@ -6,7 +6,7 @@ download them into `private/test-libraries/` (git-ignored). The tests then
 convert and verify every one of them (`PrivateLibraryTests` in
 `tests/test_convert.py`).
 
-Last checked 2026-11-25 (with default speeds): 21 libraries convert, 7,581
+Last checked 2026-11-25 (with default speeds): 24 libraries convert, 7,678
 tools written, all verified and accepted by CamCraft 0.26.0 (with and without
 `--all-presets`). `OMAX.json` (one waterjet) converts to nothing.
 
@@ -21,7 +21,9 @@ tools written, all verified and accepted by CamCraft 0.26.0 (with and without
 | `techcnc/` | [TechCNC/Template-Tool-Library](https://github.com/TechCNC/Template-Tool-Library) | AP4060 router; a plain-JSON `.tools` file with garbled (double-encoded) names |
 | `ps1/` | [evezor/Pumping-Station-One-Standard-Library](https://github.com/evezor/Pumping-Station-One-Standard-Library) | Tormach shop library, format v1, probe |
 | `helsinki/` | [HelsinkiHacklab/lottacnc](https://github.com/HelsinkiHacklab/lottacnc) | Hackerspace library, format v1, reamers |
-| `enstab/` | [ThomasLeMezo/enstabretagne-inventor-cam](https://github.com/ThomasLeMezo/enstabretagne-inventor-cam) | Haas VF2 mold tools |
+| `enstab/` | [ThomasLeMezo/enstabretagne-inventor-cam](https://github.com/ThomasLeMezo/enstabretagne-inventor-cam) | Haas VF2 mold tools, Haas TL1 lathe (24 turning tools, threading without a pitch) |
+| `rr1706/` | [rr1706/RRFusionLibrary](https://github.com/rr1706/RRFusionLibrary) | Tormach 8L lathe |
+| `tarcos/` | [TarcosS/Auto-Tool-Selector](https://github.com/TarcosS/Auto-Tool-Selector) | Fusion's metric turning samples (internal grooving, round blade, threading) |
 | `tandem/` | [machineagency/tandem](https://github.com/machineagency/tandem) | ShopBot |
 | `timm052/` | [timm052/cnc-tool-converter](https://github.com/timm052/cnc-tool-converter) | Example file with many tool types (circle segment, counterbore, taps) |
 | `ouplan/` | [X3msnake/Ouplan-CNC-Fusion-360-Post-Processor](https://github.com/X3msnake/Ouplan-CNC-Fusion-360-Post-Processor) | Small router library, format v1 |
@@ -73,6 +75,9 @@ get timm052/cnc-tool-converter "Example Files/Tool Libs/Fusion 360/Fusion Tool L
 get X3msnake/Ouplan-CNC-Fusion-360-Post-Processor tools/MAD.json ouplan
 get hackland-shared/CNC "cad_cam_post_processors/fusion360/fusion360 tools.json" hackland
 get OrenBee/FiveBarRobot "CAM_Profiles/RPF Tormach Tool Library_new.json" orenbee
+get ThomasLeMezo/enstabretagne-inventor-cam tools/TL1_POMC.json enstab
+get rr1706/RRFusionLibrary "2026 8L Library.json" rr1706
+get TarcosS/Auto-Tool-Selector "Turning Tools (Metric).json" tarcos
 get openspindle/openspindle public/tool-libraries/dreanique.json openspindle
 ```
 

@@ -10,6 +10,7 @@ Covers the sample fixture, an edge-case library built here, and every
 Fusion library under private/ (see TEST_LIBRARIES.md).
 """
 
+import contextlib
 import json
 import math
 import os
@@ -27,6 +28,7 @@ from fusitool2craftool.fusion import load_library
 from fusitool2craftool.push import PROTOCOL_VERSION, _close, _content_text, _Session, push
 
 from .test_convert import DEFAULT_SPEEDS, FIXTURES, PRIVATE, corner_chamfer, holder, single_form, tool
+from .test_lathe import TYPES, lathe
 
 CLI = os.environ.get("CAMCRAFT_CLI") or shutil.which("camcraft-cli")
 
@@ -79,6 +81,7 @@ def edge_cases() -> list[dict]:
                  {"height": 1.0, "lower-diameter": 1.25, "upper-diameter": 1.25},
                  {"height": 0.25, "lower-diameter": 1.0, "upper-diameter": 1.0},
                  {"height": 0.5, "lower-diameter": 2.5, "upper-diameter": 2.5}]}),
+        *(lathe(t) for t in TYPES),
         tool(description="drawn holder sliver", geometry={"DC": 6, "LCF": 10, "LB": 30},
              holder={"unit": "millimeters", "segments": [
                  {"height": 0.005, "lower-diameter": 20, "upper-diameter": 21},
@@ -116,14 +119,17 @@ class CamCraftLiveTests(unittest.TestCase):
             e.pop("start-values", None)
             entries.append(e)
         options = Options(default_vc=150, default_fz=0.03, max_rpm=24000,
-                          kind_defaults={"drill": {"vc": 60, "feed": 150}, "t_slot": {"vc": 60, "fz": 0.005}})
+                          kind_defaults={"drill": {"vc": 60, "feed": 150}, "t_slot": {"vc": 60, "fz": 0.005},
+                                         # lathe tools have no teeth for a chip load
+                                         "turning": {"feed": 100}, "bore": {"feed": 100}, "groove": {"feed": 50}})
         self.assertEqual(convert(entries, options).skipped, [])
         self.assert_imports(entries, options)
 
     def test_default_holder(self):
         # #14: one stand-alone holder drawn on every tool without one
         options = Options(default_holder=holder())
-        self.assertTrue(all("body" in t["definition"] for t in convert(edge_cases(), options).tools))
+        tools = [t["definition"] for t in convert(edge_cases(), options).tools]
+        self.assertTrue(all(("body" in d) != (d["holder_d"] == 0) for d in tools))  # lathe tools take none
         self.assert_imports(edge_cases(), options)
 
     def test_duplicate_fusion_numbers_are_fine(self):
@@ -161,6 +167,31 @@ class CamCraftLiveTests(unittest.TestCase):
                     self.assert_imports(load_library(src), options)
 
 
+@contextlib.contextmanager
+def camcraft():
+    """A headless CamCraft document: ``call(tool, **arguments)`` returns the tool's text."""
+    proc = subprocess.Popen([CLI, "mcp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True, encoding="utf-8")
+    timer = threading.Timer(120, proc.kill)
+    timer.start()
+    try:
+        session = _Session(proc)
+        session.request("initialize", {"protocolVersion": PROTOCOL_VERSION, "capabilities": {},
+                                       "clientInfo": {"name": "fusitool2craftool-tests", "version": "0"}})
+        session.notify("notifications/initialized")
+
+        def call(name, /, **arguments):
+            r = session.request("tools/call", {"name": name, "arguments": arguments})
+            if r.get("isError"):
+                raise AssertionError(f"{name}: {_content_text(r)}")
+            return _content_text(r)
+
+        yield call
+    finally:
+        timer.cancel()
+        _close(proc)
+
+
 def plate_with_hole(path: Path, hole: float, depth: float, size: float = 30.0, n: int = 96) -> None:
     """An ASCII STL: a square plate, z 0..depth, with a through hole at its centre."""
     def on_square(a):
@@ -195,36 +226,18 @@ class ThreadMillingLiveTests(unittest.TestCase):
         self.assertEqual(result.skipped, [])
         if change:
             change(next(t for t in result.tools if t["name"] == "TM")["definition"])
-        proc = subprocess.Popen([CLI, "mcp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, text=True, encoding="utf-8")
-        timer = threading.Timer(120, proc.kill)
-        timer.start()
-        try:
-            with tempfile.TemporaryDirectory() as tmp:
-                library = camtools.write(result, Path(tmp) / "lib.camtools")
-                plate_with_hole(Path(tmp) / "part.stl", 4.2, depth)
-                session = _Session(proc)
-                session.request("initialize", {"protocolVersion": PROTOCOL_VERSION, "capabilities": {},
-                                               "clientInfo": {"name": "fusitool2craftool-tests", "version": "0"}})
-                session.notify("notifications/initialized")
-
-                def call(name, /, **arguments):
-                    r = session.request("tools/call", {"name": name, "arguments": arguments})
-                    self.assertFalse(r.get("isError"), f"{name}: {_content_text(r)}")
-                    return _content_text(r)
-
-                call("load_machine", builtin="VMC 3-axis")
-                call("import_model", path=str(Path(tmp) / "part.stl"), name="part")
-                call("set_stock", box={"dx": 30, "dy": 30, "dz": depth})
-                call("import_tool_library", path=str(library), mode="add", format="camtools")
-                for kind, name, mill, params in (("drill", "Dr", "D", {}), ("thread", "T", "TM", {"pitch": 0.8})):
-                    call("add_operation", kind=kind, name=name, tool=mill, source="part", params=params)
-                    self.assertEqual(json.loads(call("detect_holes", name=name))["holes"], 1)
-                    call("generate", name=name)
-                return json.loads(call("verify", name="T"))
-        finally:
-            timer.cancel()
-            _close(proc)
+        with tempfile.TemporaryDirectory() as tmp, camcraft() as call:
+            library = camtools.write(result, Path(tmp) / "lib.camtools")
+            plate_with_hole(Path(tmp) / "part.stl", 4.2, depth)
+            call("load_machine", builtin="VMC 3-axis")
+            call("import_model", path=str(Path(tmp) / "part.stl"), name="part")
+            call("set_stock", box={"dx": 30, "dy": 30, "dz": depth})
+            call("import_tool_library", path=str(library), mode="add", format="camtools")
+            for kind, name, mill, params in (("drill", "Dr", "D", {}), ("thread", "T", "TM", {"pitch": 0.8})):
+                call("add_operation", kind=kind, name=name, tool=mill, source="part", params=params)
+                self.assertEqual(json.loads(call("detect_holes", name=name))["holes"], 1)
+                call("generate", name=name)
+            return json.loads(call("verify", name="T"))
 
     def assert_shank_hit(self, report: dict):
         self.assertFalse(report["ok"])
@@ -245,6 +258,80 @@ class ThreadMillingLiveTests(unittest.TestCase):
             d.pop("body")
             d.update(shank_d=4.0, shank_len=52 - d["flute_len"], holder_d=50.0, holder_len=40.0)
         self.assert_shank_hit(self.verify_thread(14, plain))
+
+
+def revolved(path: Path, profile: list[tuple[float, float]], n: int = 120) -> None:
+    """An ASCII STL of a closed (radius, z) profile turned about Z."""
+    facets = []
+    for (r1, z1), (r2, z2) in zip(profile, profile[1:] + profile[:1]):
+        for i in range(n):
+            a, b = 2 * math.pi * i / n, 2 * math.pi * (i + 1) / n
+            q = [(r * math.cos(t), r * math.sin(t), z) for r, t, z in ((r1, a, z1), (r1, b, z1), (r2, b, z2), (r2, a, z2))]
+            facets += [f for f, r in (((q[0], q[1], q[2]), r1), ((q[0], q[2], q[3]), r2)) if r > 1e-9]
+    lines = ["solid part"]
+    for f in facets:
+        lines += ["facet normal 0 0 0", "outer loop", *("vertex %.6f %.6f %.6f" % v for v in f), "endloop", "endfacet"]
+    path.write_text("\n".join(lines + ["endsolid part", ""]))
+
+
+@unittest.skipUnless(CLI, "camcraft-cli not found (set CAMCRAFT_CLI)")
+class TurningLiveTests(unittest.TestCase):
+    """#2: CamCraft turns a part with each converted lathe tool."""
+
+    def findings(self, entry, profile, operations, stock=None, change=None):
+        result = convert([entry])
+        self.assertEqual(result.skipped, [])
+        if change:
+            change(result.tools[0]["definition"])
+        out = []
+        with tempfile.TemporaryDirectory() as tmp, camcraft() as call:
+            library = camtools.write(result, Path(tmp) / "lib.camtools")
+            revolved(Path(tmp) / "part.stl", profile)
+            call("load_machine", builtin="Lathe")
+            call("import_model", path=str(Path(tmp) / "part.stl"), name="part")
+            call("set_stock", **({"cylinder": stock} if stock else {"from_model": "part"}))
+            call("import_tool_library", path=str(library), mode="add", format="camtools")
+            for kind, params in operations:
+                call("add_operation", kind=kind, name=kind, tool=result.tools[0]["name"], source="part", params=params)
+                call("generate", name=kind)
+                report = json.loads(call("verify", name=kind))
+                self.assertEqual(report["operations"][0]["status"], "ok")
+                out += [f["kind"] for f in report["findings"] if f["blocks_post"]]
+        return set(out)
+
+    BAR = [(0, 0), (20, 0), (20, 40), (0, 40)]
+
+    def test_turning_insert(self):
+        for hand in "RL":
+            self.assertEqual(self.findings(
+                lathe("turning general", holder={"HAND": hand}), self.BAR,
+                [("facing", {}), ("profile_rough", {}), ("profile_finish", {})],
+                stock={"diameter": 44, "height": 41}), set())
+
+    def test_boring_bar_is_held_where_it_does_not_fit(self):
+        def bore(hole, change=None):  # the bar reaches 14.5 + 20/2 = 24.5 mm
+            return self.findings(lathe("turning boring", holder={"OAL": 80}),
+                                 [(hole / 2, 0), (20, 0), (20, 40), (hole / 2, 40)], [("boring_turning", {})], change=change)
+        self.assertEqual(bore(26), set())
+        self.assertIn("shank_hit", bore(24.2))
+        # why not the shank's own 20 mm: CamCraft would pass a hole the bar cannot enter
+        self.assertEqual(bore(22, lambda d: d.update(diameter=20.0, shank_d=20.0)), set())
+
+    def test_blade(self):
+        groove = [(0, 0), (20, 0), (20, 18), (16, 18), (16, 22), (20, 22), (20, 40), (0, 40)]
+        window = {k: {"reference": "bottom_of_model", "offset": z} for k, z in (("bottom_z", 18.0), ("top_z", 22.0))}
+        self.assertEqual(self.findings(lathe("turning grooving"), groove, [("groove_finish", window)]), set())
+
+    def test_threading_insert(self):
+        depth, half = 1.08, 1.08 * math.tan(math.radians(30))
+        valleys = [8.0 + 2 * i for i in range(12)]
+        profile = [(0, 0), (20, 0)]
+        for z in valleys:
+            profile += [(20, z - half), (20 - depth, z), (20, z + half)]
+        params = {"pitch": 2.0, "depth": depth, "bottom_z": {"reference": "bottom_of_model", "offset": valleys[0]},
+                  "top_z": {"reference": "bottom_of_model", "offset": valleys[-1]}}
+        self.assertEqual(self.findings(lathe("turning threading"), profile + [(20, 40), (0, 40)],
+                                       [("threading", params)]), set())
 
 
 if __name__ == "__main__":
