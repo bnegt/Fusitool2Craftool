@@ -6,9 +6,12 @@ download them into `private/test-libraries/` (git-ignored). The tests then
 convert and verify every one of them (`PrivateLibraryTests` in
 `tests/test_convert.py`).
 
-Last checked 2026-11-25 (with default speeds): 24 libraries convert, 7,678
+Last checked 2026-11-25 (with default speeds): 64 libraries convert, 132,392
 tools written, all verified and accepted by CamCraft 0.26.0 (with and without
-`--all-presets`). `OMAX.json` (one waterjet) converts to nothing.
+`--all-presets`): 24 of the sources below with 7,678 tools, and 40 of
+[Autodesk's vendor libraries](#autodesks-vendor-libraries) with 124,714. The
+others convert to nothing: `OMAX.json` (one waterjet), three holder libraries
+and two probe libraries.
 
 ## Sources
 
@@ -35,15 +38,147 @@ Not downloadable as a file, but worth having:
 
 - **Autodesk's own "Fusion Library" samples** (every Fusion tool type): set
   `INCLUDE_FUSION_SAMPLES = True` in
-  [`fusion_script/ExportAllToolLibraries`](fusion_script/ExportAllToolLibraries/README.md)
-  and run it in Fusion.
-- **Vendor libraries that need Fusion or an add-in:** Harvey Tool / Helical
-  ([Autodesk's CAM tool library site](https://www.harveyperformance.com/autodesk-fusion-integrations/)),
-  [Kennametal](https://www.kennametal.com/se/en/resources/software/fusion.html),
-  Sandvik CoroPlus, Amana, Whiteside.
+  [`fusion_script/ExportAllToolLibraries`](fusion_script/ExportAllToolLibraries/README.md),
+  run it in Fusion and put its `Fusion/` folder in
+  `private/test-libraries/fusion-samples/`
+  ([#19](https://github.com/bnegt/Fusitool2Craftool/issues/19)).
+- **Vendor libraries that need Fusion or an add-in:**
+  [Kennametal](https://www.kennametal.com/se/en/resources/software/fusion.html)
+  (milling), Sandvik CoroPlus, Amana, Whiteside.
 - More on GitHub: `gh search code '"start-values" "post-process"' --extension json`.
 
-## Download them all
+## Autodesk's vendor libraries
+
+[Tools for Autodesk Fusion](https://cam.autodesk.com/hsmtools) lists 52 vendor
+libraries to download without an account. Use them whenever a change could
+touch real tools: they hold 17 times as many as the other libraries together,
+with most vendors' habits in them (catalogs without speeds, old format
+versions, turning tools with a full holder, stand-alone holders, probes).
+
+```sh
+python3 tests/get_autodesk_libraries.py               # about 530 MB into private/test-libraries/autodesk/
+python3 tests/get_autodesk_libraries.py --only harvey  # just some
+python3 tests/get_autodesk_libraries.py --update       # again, after a vendor's update
+```
+
+The site had no file for 7 of them (it answers "Failed to download file").
+Counts on 2026-11-25; "Convert" is without defaults (a catalog without speeds
+gives none), "With defaults" uses the tests' default speeds:
+
+| Library (catalogue name) | Entries | Convert | With defaults | Mostly |
+|---|---|---|---|---|
+| Harvey Tool/End Mills | 11,937 | 11,449 | 11,449 | flat end mill, ball end mill, bull nose end mill |
+| Harvey Tool/Holemaking and Threading | 3,959 | 2,170 | 2,170 | drill, form mill, spot drill |
+| Harvey Tool/Specialty Profiles | 7,866 | 3,355 | 3,355 | slot mill, chamfer mill, form mill |
+| Helical Solutions/End Mills | 6,007 | 6,007 | 6,007 | bull nose end mill, flat end mill, ball end mill |
+| Helical Solutions/Specialty Profiles | 190 | 185 | 185 | chamfer mill, spot drill |
+| BitsBits/BitsBits Cutting Tools | 62 | 50 | 50 | flat end mill, tapered mill, ball end mill |
+| IMCO/Solid End Mills Metric | 1,635 | 1,631 | 1,635 | bull nose end mill, flat end mill, ball end mill |
+| IMCO/Solid End Mills Imperial | 3,243 | 3,243 | 3,243 | bull nose end mill, flat end mill, ball end mill |
+| SGS Kyocera/SGS Carbide Tools Metric | 4,906 | 0 | 4,893 | drill, flat end mill, bull nose end mill |
+| SGS Kyocera/SGS Carbide Tools Imperial | 7,049 | 0 | 7,022 | bull nose end mill, flat end mill, ball end mill |
+| Haas Tooling/Haas Tooling | 3,013 | 158 | 2,972 | drill, bull nose end mill, tap right hand |
+| Haas Tooling/Haas Holders | 404 | 0 | 0 | holder |
+| Haimer/Haimer Holders | 557 | 0 | 0 | holder |
+| SwiftCARB/End Mills | 23,574 | 23,571 | 23,571 | bull nose end mill, flat end mill, ball end mill |
+| DATRON/DATRON Cutting Tools | 1,003 | 923 | 923 | flat end mill, drill, chamfer mill |
+| Delta Tools/HPC Endmill Solid Carbide | 154 | 154 | 154 | flat end mill, bull nose end mill |
+| Destiny Tool/Destiny Tool | 1,791 | 0 | 1,791 | flat end mill, bull nose end mill, ball end mill |
+| Renishaw/Renishaw - OMP Probes | 16 | 0 | 0 | probe |
+| Blum/Blum Probes | 15 | 0 | 0 | holder, probe |
+| Tormach/Tormach - 15L Slant-PRO - Starter | 15 | 15 | 15 | turning general, turning grooving, turning threading |
+| Tormach/Tormach - PCNC 440, PCNC 770 - Starter | 20 | 16 | 16 | flat end mill, holder, spot drill |
+| Tormach/Tormach - PCNC 1100 - Starter | 20 | 16 | 16 | flat end mill, holder, spot drill |
+| Sandvik Coromant/Solid End Mills | 2,876 | 0 | 2,844 | bull nose end mill, flat end mill, ball end mill |
+| Sandvik Coromant/Solid Hole Making | 4,315 | 0 | 4,085 | tap right hand, drill, reamer |
+| Guhring/Solid Hole Making | 20,121 | 0 | 20,121 | drill, center drill, spot drill |
+| NexGen Tooling/NexGen Tooling | 3,981 | 0 | 3,981 | bull nose end mill, flat end mill, ball end mill |
+| Garr Tool/Garr Tool | 11,092 | 0 | 10,496 | drill, bull nose end mill, flat end mill |
+| Valor Holemaking/Valor Holemaking | 2,251 | 2,001 | 2,001 | drill, form mill, chamfer mill |
+| OSG/End Mills | 259 | 259 | 259 | flat end mill |
+| Dormer Pramet/Dormer Pramet | - | - | - | not available |
+| Kennametal/Kennametal | - | - | - | not available |
+| Iscar/Iscar Hole Making Imperial | 289 | 0 | 289 | drill |
+| Iscar/Iscar Hole Making Metric | 1,156 | 0 | 1,156 | drill |
+| Iscar/Iscar Solid End Mills Imperial | 3,249 | 3,249 | 3,249 | bull nose end mill, flat end mill, ball end mill |
+| Iscar/Iscar Solid End Mills Metric | 2,564 | 2,564 | 2,564 | bull nose end mill, flat end mill, ball end mill |
+| Fraiser Tools/Boss Beaver | 123 | 119 | 119 | flat end mill, drill, chamfer mill |
+| Fraiser Tools/Carbider Poly | 114 | 114 | 114 | flat end mill, chamfer mill, face mill |
+| XEBEC/XEBEC Deburring tools | 42 | 9 | 9 | lollipop mill |
+| Schunk/Schunk Holders | 642 | 0 | 0 | holder |
+| Kennametal/Turning Imperial/Turning Imperial | 57 | 55 | 55 | turning general, turning boring, turning grooving |
+| Kennametal/Turning Metric/Turning Metric | - | - | - | not available |
+| MA Ford/MA Ford End Mills | 20 | 20 | 20 | bull nose end mill |
+| MA Ford Europe/End Mills | 189 | 189 | 189 | bull nose end mill, flat end mill |
+| Sandvik Coromant/Turning Imperial/Turning Imperial | 54 | 54 | 54 | turning general, turning boring, turning threading |
+| Sandvik Coromant/Turning Metric/Turning Metric | 243 | 240 | 240 | turning general, turning boring, turning grooving |
+| Iscar/Turning Imperial/Turning Imperial | 71 | 71 | 71 | turning general, turning boring, turning grooving |
+| Iscar/Turning Metric/Turning Metric | 106 | 106 | 106 | turning general, turning boring, turning grooving |
+| Mitsubishi Materials/Solid End Mills | 3,248 | 3,225 | 3,225 | flat end mill, ball end mill, bull nose end mill |
+| Ingersoll/Turning Imperial/Turning Imperial | - | - | - | not available |
+| Ingersoll/Turning Metric/Turning Metric | - | - | - | not available |
+| Widia/Turning Imperial/Turning Imperial | - | - | - | not available |
+| Widia/Turning Metric/Turning Metric | - | - | - | not available |
+| **Total** | **134,498** | **65,218** | **124,714** | |
+
+The tools skipped even with defaults, by reason: form mill 3,023; undercut
+cutter whose shank is as wide as or wider than its head 2,368, or without a
+neck length 110; tapered mill 925; reamer 876; counterbore 434; radius mill
+270; drill with a point of 60 degrees or less 119; probe 22; other 17.
+
+## Fusion tool types covered
+
+Tools per type in all of `private/test-libraries/`. Autodesk's
+[schema](https://cam.autodesk.com/tools/tools/Tooling%20Schema/ToolLibrary.schema.json)
+names 40 types; 33 occur in a real library. The other 7 are in none of them,
+so what we do with them rests on the schema alone (#19). Every type converts
+or is skipped under a family name
+(`test_every_fusion_type_converts_or_is_named`).
+
+| Fusion type | Tools | Libraries | Result |
+|---|---|---|---|
+| ball end mill | 11,958 | 37 | `ball_nose` |
+| boring bar | 1 | 1 | `bore` |
+| bull nose end mill | 49,895 | 27 | `bull_nose` |
+| center drill | 373 | 6 | `drill` |
+| chamfer mill | 2,278 | 24 | `taper` |
+| circle segment barrel | 1 | 1 | skipped: circle segment mill |
+| circle segment lens | 1 | 1 | skipped: circle segment mill |
+| circle segment oval | 1 | 1 | skipped: circle segment mill |
+| circle segment taper | **none** | - | skipped: circle segment mill |
+| corner chamfer end mill | **none** | - | `bull_nose` |
+| counter bore | 435 | 3 | skipped: counterbore |
+| counter sink | 108 | 7 | `taper` |
+| dovetail mill | 633 | 5 | `dovetail` |
+| drill | 34,969 | 27 | `drill` |
+| electric arc wire | **none** | - | skipped: additive head |
+| face mill | 168 | 14 | `end_mill` |
+| flat end mill | 25,050 | 45 | `end_mill` |
+| form mill | 3,026 | 7 | skipped: form mill |
+| holder | 1,685 | 13 | counted, see `--holders` |
+| laser cutter | 2 | 2 | skipped: sheet cutting head |
+| laser powder | **none** | - | skipped: additive head |
+| laser wire | **none** | - | skipped: additive head |
+| lollipop mill | 1,018 | 5 | `lollipop` |
+| plasma cutter | 1 | 1 | skipped: sheet cutting head |
+| probe | 28 | 7 | skipped: probe |
+| radius mill | 273 | 4 | skipped: roundover bit |
+| reamer | 881 | 9 | skipped: reamer |
+| shaft | **none** | - | skipped: holder part |
+| slot mill | 3,746 | 9 | `t_slot` |
+| spot drill | 1,249 | 16 | `drill` |
+| tap left hand | 1 | 1 | `tap` |
+| tap right hand | 2,744 | 7 | `tap` |
+| tapered mill | 967 | 11 | skipped: tapered mill |
+| thread mill | 206 | 5 | `thread_mill` |
+| tool block | **none** | - | skipped: holder part |
+| turning boring | 200 | 8 | `bore` |
+| turning general | 334 | 10 | `turning` |
+| turning grooving | 73 | 10 | `groove` |
+| turning threading | 19 | 6 | `thread` |
+| waterjet | 2 | 2 | skipped: sheet cutting head |
+
+## Download the others
 
 Needs `curl` and an authenticated `gh`. Run from the repo root:
 

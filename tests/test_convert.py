@@ -11,12 +11,23 @@ from unittest import mock
 
 from fusitool2craftool import camtools
 from fusitool2craftool.cli import main
-from fusitool2craftool.convert import RELEASED_MATERIALS, Options, convert, find_holder, preset_material, why_not_sane
+from fusitool2craftool.convert import (KINDS, RELEASED_MATERIALS, Options, convert, find_holder, preset_material,
+                                       unsupported_category, why_not_sane)
 from fusitool2craftool.verify import verify_file
 from fusitool2craftool.fusion import FusionLibraryError, load_library, parse_library
 
 FIXTURES = Path(__file__).parent / "fixtures"
 PRIVATE = Path(__file__).parent.parent / "private"
+# Every tool type in Autodesk's schema:
+# https://cam.autodesk.com/tools/tools/Tooling%20Schema/ToolLibrary.schema.json
+FUSION_TYPES = """
+ball end mill, boring bar, bull nose end mill, center drill, chamfer mill, circle segment barrel,
+circle segment lens, circle segment oval, circle segment taper, corner chamfer end mill, counter bore,
+counter sink, dovetail mill, drill, electric arc wire, face mill, flat end mill, form mill, holder,
+laser cutter, laser powder, laser wire, lollipop mill, plasma cutter, probe, radius mill, reamer, shaft,
+slot mill, spot drill, tap left hand, tap right hand, tapered mill, thread mill, tool block,
+turning boring, turning general, turning grooving, turning threading, waterjet
+""".replace("\n", " ").strip().split(", ")
 
 
 def tool(type_="flat end mill", unit="millimeters", geometry=None, presets=None, **extra):
@@ -702,7 +713,22 @@ class SkipCategoryTests(unittest.TestCase):
 
     def test_reamer_counterbore_form_mill_named(self):
         r = convert([tool("reamer"), tool("counter bore"), tool("form mill"), tool("probe")])
-        self.assertEqual([s.category for s in r.skipped], ["reamer", "counterbore", "form mill", None])
+        self.assertEqual([s.category for s in r.skipped], ["reamer", "counterbore", "form mill", "probe"])
+
+    def test_every_fusion_type_converts_or_is_named(self):
+        # the 40 types of Autodesk's ToolLibrary.schema.json (#19)
+        families = {t: unsupported_category({"type": t, "geometry": {}}) for t in FUSION_TYPES}
+        self.assertEqual(len(families), 40)
+        unnamed = {t for t in FUSION_TYPES if t not in KINDS and not families[t]}
+        self.assertEqual(unnamed, {"holder"})  # counted, not skipped
+        for t in FUSION_TYPES:
+            with self.subTest(type=t):
+                r = convert([tool(t)])  # milling fields: some types need more, none may crash
+                self.assertEqual(len(r.tools) + len(r.skipped) + r.holders, 1)
+                if families[t]:
+                    self.assertEqual([s.category for s in r.skipped], [families[t]])
+                r = convert([{"type": t}])
+                self.assertEqual((len(r.tools), len(r.skipped) + r.holders), (0, 1))
 
     def test_holder_only_library_is_not_an_error(self):
         lib = {"data": [{"type": "holder", "description": "BT30 ER32"}, {"type": "holder"}]}

@@ -10,7 +10,7 @@ one go is included.
 
 Pure Python 3.10+, no dependencies. For **CamCraft 0.26.0 or newer**; older
 versions may refuse a library. Tested against CamCraft 0.26.0: all
-7,682 tools converted from 25 real libraries import without a change (see
+132,396 tools converted from 65 real libraries import without a change (see
 [Testing against CamCraft](#testing-against-camcraft)).
 
 ## How to run
@@ -395,7 +395,10 @@ values, not cutting data.
 | form mill | CamCraft has no custom-profile mill (its `Form` kind is a lathe form gauge) |
 | internal and face grooving, round grooving, internal threading tools | CamCraft's blade and threading insert are outside tools, and its blade is square |
 | threading tools without a pitch (`TP`) or with a form other than 60 degrees | no known V width ([#20](https://github.com/bnegt/Fusitool2Craftool/issues/20)) |
-| probes, engraving | not mapped yet |
+| circle segment mill (barrel, lens, oval, taper) | CamCraft has no kind for them |
+| probe | not a cutter |
+| waterjet, laser and plasma cutter; laser powder, laser wire and electric arc wire | cutting and additive heads, not cutters |
+| `shaft`, `tool block` | parts of a holder, not cutters |
 | milling or drilling tools without a flute length (`LCF`) | nothing else Fusion states gives the cutting length: CamCraft would think the tool cuts along `shoulder-length`, `LB` or `OAL`, and could bury the shank or neck. Give the tool a flute length in Fusion. Single-form thread mills are the exception: their tooth height follows from the pitch |
 | tools without rpm/feed | skipped unless a [default](#default-speeds) is given |
 
@@ -419,12 +422,16 @@ python3 -m unittest discover -s tests -t .
 Put your own Fusion libraries in `private/` (git-ignored), for example a whole
 ExportAllToolLibraries export; subfolders are searched. The tests then also
 check that every library converts and verifies, and that any skipped tool
-belongs to a named unsupported family (tapered, roundover, reamer, ...).
+belongs to a named unsupported family (tapered, roundover, reamer, ...). That
+last check leaves out `private/test-libraries/`, the place for other people's
+libraries.
 
 Real third-party libraries to test against (RobbJack, Haas/Matsuura/Tormach
 shop libraries, Carbide 3D, ...) are listed in
 [TEST_LIBRARIES.md](TEST_LIBRARIES.md), with a script that downloads them
-into `private/test-libraries/`.
+into `private/test-libraries/`. `tests/get_autodesk_libraries.py` fetches
+Autodesk's public vendor libraries (Harvey, Sandvik, Iscar, Haas, ...;
+134,498 entries in 45 files).
 
 ### Testing against CamCraft
 
@@ -442,9 +449,11 @@ CAMCRAFT_CLI=~/camcraft-0.26.0-linux-x86_64/camcraft-cli \
     python3 -m unittest discover -s tests -t .
 ```
 
-Last run (CamCraft 0.26.0, 2026-11-25): 25 libraries, 7,682 tools written
-with default speeds (7,613 without), all imported, none renamed or skipped,
-with and without `--all-presets` (11,269 material rows).
+Last run (CamCraft 0.26.0, 2026-11-25): 65 libraries, 132,396 tools written
+with default speeds (72,831 without), all imported, none renamed or skipped,
+with and without `--all-presets` (37,237 material rows). 40 of the libraries
+and 124,714 of the tools are Autodesk's vendor libraries; with them the whole
+suite takes about 2.5 minutes (1 minute without CamCraft).
 
 Converted lathe tools turn, bore, groove and thread a part in CamCraft, and
 a boring bar is held in a hole it does not fit. The live tests also generate
