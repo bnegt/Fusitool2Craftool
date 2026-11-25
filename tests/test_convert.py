@@ -789,11 +789,38 @@ class TaperedMillTests(unittest.TestCase):
         self.assertAlmostEqual(d["diameter"], 0.0799831981155544 * 25.4, places=3)  # Fusion's own shoulder-diameter
         self.assertEqual(self.verifies(result), [])
 
-    def test_ball_by_name_keeps_fusions_flank(self):
-        # RE = DC/2: Fusion's cone starts at the full radius, so a sliver stays flat
-        d, result = one(tapered({"RE": 1}), TAPERS)
-        self.assertEqual((d["tip_form"], d["tip_diameter"], d["corner_r"]), ("flat", 2, 1))
-        self.assertTrue(any("tapered ball" in w for w in result.warnings))
+    def test_ball_of_half_the_tip_fits_fusions_cone(self):
+        # RE = DC/2: Fusion's cone starts at the full radius, so a true ball would have a thinner flank
+        for re_ in (1, 0.992):  # Garr rounds it to 3 decimals of an inch
+            d, result = one(tapered({"RE": re_}), TAPERS)
+            self.assertEqual(d["tip_form"], "ball")
+            self.assertNotIn("tip_diameter", d)
+            self.assertAlmostEqual(d["corner_r"], 1 / self.tangent(3), places=5)
+            self.assertAlmostEqual(d["diameter"], 2 + 40 * math.tan(math.radians(3)), places=5)
+            self.assertTrue(any("tapered ball of" in w for w in result.warnings))
+            self.assertEqual(self.verifies(result), [])
+
+    def test_fitted_ball_encloses_the_real_one(self):
+        def radius(ball, angle, z):  # of a ball and the cone tangent to it
+            a = math.radians(angle)
+            if z <= ball * (1 - math.sin(a)):
+                return math.sqrt(ball * ball - (ball - z) ** 2)
+            return ball * math.tan(math.pi / 4 - a / 2) + z * math.tan(a)
+        for angle in (1, 3, 6.28, 7):
+            d, _ = one(tapered({"RE": 1, "TA": angle, "LCF": 10}), TAPERS)
+            for i in range(1, 400):
+                z = 10 * i / 400
+                self.assertGreaterEqual(radius(d["corner_r"], angle, z), radius(1, angle, z), (angle, z))
+
+    def test_rounded_tip_that_is_nearly_a_ball_stays_flat(self):
+        d, result = one(tapered({"RE": 0.95}), TAPERS)
+        self.assertEqual((d["tip_form"], d["tip_diameter"], d["corner_r"]), ("flat", 2, 0.95))
+        self.assertEqual(self.verifies(result), [])
+
+    def test_steep_cone_is_no_ball(self):
+        # Matsuura: RE = DC/2 at 30 degrees; the ball that fits is 73 % larger
+        d, result = one(tapered({"DC": 0.0508, "RE": 0.0254, "TA": 30, "LCF": 6.35, "LB": 31.75}), TAPERS)
+        self.assertEqual((d["tip_form"], d["tip_diameter"], d["corner_r"]), ("flat", 0.0508, 0.0254))
         self.assertEqual(self.verifies(result), [])
 
     def test_ball_larger_than_its_tip(self):
@@ -813,7 +840,7 @@ class TaperedMillTests(unittest.TestCase):
             r0 = d["tip_diameter"] / 2 if d["tip_form"] == "flat" else cr * math.tan(math.pi / 4 - half / 2)
             for i in range(1, 200):
                 z = 20 * i / 200
-                # both outlines have the same fillet, so it is the cone that counts
+                # the flank; a fitted ball's tip is test_fitted_ball_encloses_the_real_one
                 self.assertGreaterEqual(min(r0 + z * math.tan(half), d["diameter"] / 2),
                                         g["DC"] / 2 + z * math.tan(math.radians(g["TA"])) - 1e-5, geometry)
             self.assertIsNone(why_not_sane(d))
@@ -856,6 +883,7 @@ class TaperedMillTests(unittest.TestCase):
     def test_output_check_reads_the_tip(self):
         for e, change in ((tapered(), {"tip_form": "ball"}), (tapered(), {"tip_diameter": 1.5}),
                           (tapered(), {"diameter": 2.0}), (tapered(), {"tip_angle": 3.0}),
+                          (tapered({"RE": 1}), {"corner_r": 1.0}), (tapered({"RE": 1}), {"tip_form": "flat", "tip_diameter": 2.0}),
                           (tapered({"RE": 0.3}), {"corner_r": 0.0}), (tapered(), {"kind": "end_mill"}),
                           (tapered({"RE": 1 / self.tangent(3)}), {"tip_form": "flat", "tip_diameter": 2.0})):
             d, result = one(e, TAPERS)

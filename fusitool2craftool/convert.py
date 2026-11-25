@@ -134,6 +134,7 @@ UNDERCUT = ("t_slot", "keyseat", "lollipop", "dovetail")
 
 DEFAULT_DRILL_ANGLE = 118.0
 BALL_TIP_FIT = 1e-3  # mm; a flat face narrower than this under a tapered mill's radius is a ball tip
+BALL_TIP_GROWTH = 0.2  # a tapered ball's radius may grow this much to fit Fusion's cone
 MIN_DRILL_ANGLE = 60.0  # CamCraft's drill kind wants a point over this (tool_sanity.rs)
 
 # thread_mill.rs: radial depth of an internal / external 60 degree thread
@@ -698,18 +699,23 @@ def _tapered_mill(d: dict, ta: float, re_: float, warnings: list[str]) -> None:
     ``TA`` its angle off the axis. CamCraft's ``diameter`` is the widest one,
     ``tip_angle`` the included angle, and ``tip_diameter`` Fusion's ``DC``.
     ``RE`` rounds the tip's corner: where it leaves no flat face it is a
-    ball, tangent to the cone.
+    ball, tangent to the cone. Many balls have an ``RE`` of half of ``DC``,
+    which leaves a sliver flat in Fusion's drawing. They are the ball that
+    fits Fusion's cone: slightly larger than the real one, never thinner.
     """
     half, tip = math.radians(ta), d["diameter"]
     cone = re_ * (1 - math.sin(half)) / math.cos(half)  # the radius at the tip of a cone tangent to that ball
     flat = tip / 2 - cone
     d["tip_angle"] = 2 * ta
     d["corner_r"] = re_
-    if flat > BALL_TIP_FIT or re_ <= 0:
-        d["tip_form"], d["tip_diameter"] = "flat", tip
-        if re_ > 0 and abs(re_ - tip / 2) <= 0.1 * tip / 2:
-            warnings.append(f"tapered ball written as Fusion draws it: a {re_:g} mm corner radius on a flat tip, "
-                            f"with {2 * flat:.3g} mm left flat (a true {re_:g} mm ball would have a thinner flank)")
+    if re_ <= 0 or flat > BALL_TIP_FIT:
+        fitting = tip / 2 * math.cos(half) / (1 - math.sin(half))  # the ball tangent to Fusion's cone
+        if abs(re_ - tip / 2) <= 0.02 * tip / 2 and fitting <= re_ * (1 + BALL_TIP_GROWTH):
+            d["tip_form"], d["corner_r"] = "ball", fitting
+            warnings.append(f"tapered ball of {re_:g} mm radius written as {fitting:.4g} mm, the ball that fits "
+                            f"Fusion's cone: the real tip is smaller, so it leaves higher scallops")
+        else:
+            d["tip_form"], d["tip_diameter"] = "flat", tip
     else:
         d["tip_form"] = "ball"
         if flat < -BALL_TIP_FIT:

@@ -307,11 +307,16 @@ def _tapered_problems(d: dict, f, ta: float, check) -> list[str]:
     dc, re_, lcf = f("DC") or 0.0, f("RE") or 0.0, f("LCF") or 0.0
     slope = math.tan(math.radians(ta))
     check("tip_angle", 2 * ta, "2 x TA")
-    check("corner_r", re_, "RE")
     # the tangent length from a corner to a fillet is R / tan(half the corner's inside angle)
     need = re_ * math.tan(math.radians(45 - ta / 2))
     form, start = d.get("tip_form"), dc / 2
-    if re_ and need >= dc / 2 - 1e-3:
+    fits = dc / 2 / math.tan(math.radians(45 - ta / 2))  # the ball tangent to Fusion's cone
+    named_ball = abs(re_ - dc / 2) <= 0.02 * dc / 2 and fits <= 1.2 * re_ and need < dc / 2 - 1e-3
+    check("corner_r", fits if named_ball else re_, "ball that fits the cone" if named_ball else "RE")
+    if named_ball:
+        if form != "ball" or d.get("tip_diameter"):
+            out.append(f"tip is {form!r} ({d.get('tip_diameter')} mm), Fusion's RE is half of DC: a ball")
+    elif re_ and need >= dc / 2 - 1e-3:
         if form != "ball" or d.get("tip_diameter"):
             out.append(f"tip is {form!r} ({d.get('tip_diameter')} mm), Fusion's RE leaves no flat: a ball")
         start = max(start, need)
