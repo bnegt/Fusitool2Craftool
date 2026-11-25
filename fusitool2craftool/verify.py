@@ -67,6 +67,9 @@ def compare(d: dict, entry: dict, options=None) -> list[str]:
     if ftype.startswith("turning "):
         return _compare_lathe(d, entry, options)
 
+    if g.get("HAND") is False and ftype != "tap left hand":
+        out.append("a left-hand cutter is written as a right-hand one")
+
     def check(field: str, expected, fusion_key: str) -> None:
         if expected is None:
             return

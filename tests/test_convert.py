@@ -962,6 +962,40 @@ class TaperedMillTests(unittest.TestCase):
         self.assertEqual(result.version, 1)
 
 
+class LeftHandTests(unittest.TestCase):
+    """#38: CamCraft turns every mill and drill forward."""
+
+    KINDS = (("drill", {"SIG": 118}), ("center drill", {"SIG": 118}), ("flat end mill", {}), ("chamfer mill", {"TA": 45}),
+             ("tap right hand", {"DC": 8, "TP": 1.25}), ("thread mill", {"DC": 10, "LCF": 15, "TP": 1.5}))
+
+    def test_left_hand_cutters_are_skipped(self):
+        for type_, g in self.KINDS:
+            result = convert([tool(type_, geometry={**g, "HAND": False})])
+            self.assertEqual((result.tools, result.skipped[0].category), ([], "left-hand cutter"), type_)
+            self.assertIn("reversed spindle", result.skipped[0].reason)
+
+    def test_right_hand_and_unstated_convert(self):
+        for type_, g in self.KINDS:
+            for hand in ({"HAND": True}, {}):
+                self.assertEqual(convert([tool(type_, geometry={**g, **hand})]).skipped, [], type_)
+
+    def test_left_hand_tap_keeps_its_hand(self):
+        for hand in (False, True):
+            d, _ = one(tool("tap left hand", geometry={"DC": 8, "TP": 1.25, "HAND": hand}))
+            self.assertEqual(d["thread_hand"], "left")
+
+    def test_other_families_keep_their_name(self):
+        result = convert([tool("reamer", geometry={"HAND": False})])
+        self.assertEqual(result.skipped[0].category, "reamer")
+
+    def test_output_check_refuses_a_left_hand_cutter(self):
+        d, result = one(tool("drill", geometry={"SIG": 118, "HAND": True}))
+        entry = result.sources[result.tools[0]["name"]]
+        self.assertEqual(compare(d, entry, result.options), [])
+        entry["geometry"]["HAND"] = False
+        self.assertTrue(any("left-hand" in p for p in compare(d, entry, result.options)))
+
+
 class UndercutShankTests(unittest.TestCase):
     """#27: undercut cutters whose shank is as wide as the head."""
 
