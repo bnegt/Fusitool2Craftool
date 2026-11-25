@@ -421,15 +421,20 @@ the tools but **no operation cuts with a flat or ball tip yet**.
 | CamCraft | from Fusion |
 |---|---|
 | `tip_angle` | 2 x `TA` (`TA` is off the axis) |
-| `tip_form` | `ball` where `RE` leaves no flat face, else `flat` |
+| `tip_form` | `ball` where `RE` leaves no flat face or is half of `DC`, else `flat` |
 | `tip_diameter` (flat) | `DC`, the cone's diameter at the tip |
-| `corner_r` | `RE`: the corner of a flat tip, or the ball |
+| `corner_r` | `RE`: the corner of a flat tip, or the ball (see below) |
 | `diameter` | the widest: `DC + 2 x LCF x tan TA` |
 
 - A ball whose `RE` is half of `DC` (Garr, Mitsubishi, SpeTool and others) is
-  a flat tip with a rounded corner, as Fusion draws it, with a warning. A true
-  ball of that radius would have a thinner flank than Fusion's. Harvey's `DC`
-  fits the ball, so those are balls.
+  written as the ball that fits Fusion's cone, with a warning. It is 2 to 14 %
+  larger than the real one, so the real tip leaves slightly higher scallops. A
+  ball of exactly `RE` would have a thinner flank than Fusion's, and the small
+  flat Fusion draws would keep the tool out of CamCraft's planned 3D Finish,
+  which takes only ball tips
+  ([NeoTech/Camcraft#3374](https://github.com/NeoTech/Camcraft/issues/3374)).
+  Where that ball is over 20 % larger (a steep cone), it stays a flat tip with
+  a rounded corner. Harvey's `DC` already fits the ball.
 - A cone wider than the shank at the top of the flutes gets a warning: it is
   written as Fusion has it, and the flute length may be wrong.
 - `--default-vc` is computed at the widest diameter, not at the tip.
