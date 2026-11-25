@@ -6,9 +6,9 @@ download them into `private/test-libraries/` (git-ignored). The tests then
 convert and verify every one of them (`PrivateLibraryTests` in
 `tests/test_convert.py`).
 
-Last checked 2026-11-23: 21 libraries, 6,125 tools; 20 libraries convert,
-7,435 tools written, all verified and accepted by CamCraft 0.25.0
-(with and without `--all-presets`).
+Last checked 2026-11-25 (with default speeds): 21 libraries convert, 7,581
+tools written, all verified and accepted by CamCraft 0.26.0 (with and without
+`--all-presets`). `OMAX.json` (one waterjet) converts to nothing.
 
 ## Sources
 

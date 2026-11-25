@@ -11,9 +11,12 @@ Fusion library under private/ (see TEST_LIBRARIES.md).
 """
 
 import json
+import math
 import os
 import shutil
+import subprocess
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -21,9 +24,9 @@ from fusitool2craftool import camtools
 from fusitool2craftool.cli import library_files
 from fusitool2craftool.convert import Options, convert
 from fusitool2craftool.fusion import load_library
-from fusitool2craftool.push import push
+from fusitool2craftool.push import PROTOCOL_VERSION, _close, _content_text, _Session, push
 
-from .test_convert import FIXTURES, PRIVATE, corner_chamfer, single_form, tool
+from .test_convert import DEFAULT_SPEEDS, FIXTURES, PRIVATE, corner_chamfer, single_form, tool
 
 CLI = os.environ.get("CAMCRAFT_CLI") or shutil.which("camcraft-cli")
 
@@ -132,7 +135,12 @@ class CamCraftLiveTests(unittest.TestCase):
                    {"name": "Gray Iron", "n": 7000, "v_f": 700},
                    {"name": "Brass", "n": 15000, "v_f": 1500},
                    {"name": "Acetal", "n": 16000, "v_f": 2500},
-                   {"name": "Hardwood", "n": 16000, "v_f": 3000}]  # unreleased word: left out
+                   {"name": "Softwood", "n": 18000, "v_f": 3500},
+                   {"name": "Hardwood", "n": 16000, "v_f": 3000},
+                   {"name": "MDF", "n": 17000, "v_f": 3200},
+                   {"name": "Plywood", "n": 17500, "v_f": 3300},
+                   {"name": "Acrylic", "n": 15500, "v_f": 2200},
+                   {"name": "HDPE", "n": 16500, "v_f": 2600}]  # wood/plastic words: CamCraft 0.26.0
         entries = [tool(description=f"multi {i}", presets=presets) for i in range(2)] + edge_cases()
         self.assert_imports(entries, Options(all_presets=True))
 
@@ -141,9 +149,96 @@ class CamCraftLiveTests(unittest.TestCase):
         if not files:
             self.skipTest("no Fusion libraries in private/")
         for src in files:
-            for options in (Options(), Options(all_presets=True)):
-                with self.subTest(library=str(src.relative_to(PRIVATE)), all_presets=options.all_presets):
+            for options in (Options(), Options(all_presets=True), DEFAULT_SPEEDS):
+                with self.subTest(library=str(src.relative_to(PRIVATE)), all_presets=options.all_presets,
+                                  defaults=options is DEFAULT_SPEEDS):
                     self.assert_imports(load_library(src), options)
+
+
+def plate_with_hole(path: Path, hole: float, depth: float, size: float = 30.0, n: int = 96) -> None:
+    """An ASCII STL: a square plate, z 0..depth, with a through hole at its centre."""
+    def on_square(a):
+        k = size / 2 / max(abs(math.cos(a)), abs(math.sin(a)))
+        return k * math.cos(a), k * math.sin(a)
+
+    facets = []
+    angles = [2 * math.pi * i / n for i in range(n + 1)]  # multiples of 45 degrees hit the corners
+    for a, b in zip(angles, angles[1:]):
+        ci, cj = ((hole / 2 * math.cos(t), hole / 2 * math.sin(t)) for t in (a, b))
+        qi, qj = on_square(a), on_square(b)
+        top = [[(*ci, depth), (*qi, depth), (*qj, depth)], [(*ci, depth), (*qj, depth), (*cj, depth)]]
+        facets += top
+        facets += [[(x, y, 0.0) for x, y, _ in reversed(f)] for f in top]
+        facets += [[(*qi, 0.0), (*qj, 0.0), (*qj, depth)], [(*qi, 0.0), (*qj, depth), (*qi, depth)]]
+        facets += [[(*cj, 0.0), (*ci, 0.0), (*ci, depth)], [(*cj, 0.0), (*ci, depth), (*cj, depth)]]
+    lines = ["solid plate"]
+    for f in facets:
+        lines += ["facet normal 0 0 0", "outer loop", *("vertex %.6f %.6f %.6f" % v for v in f), "endloop", "endfacet"]
+    path.write_text("\n".join(lines + ["endsolid plate", ""]))
+
+
+@unittest.skipUnless(CLI, "camcraft-cli not found (set CAMCRAFT_CLI)")
+class ThreadMillingLiveTests(unittest.TestCase):
+    """#16: CamCraft threads an M5 hole with a converted single-form mill."""
+
+    def verify_thread(self, depth: float, change=None) -> dict:
+        """Drill and thread an M5x0.8 hole; CamCraft's verify of the thread."""
+        result = convert([
+            single_form(description="TM"),  # D3.9 under a 4 mm shank, reach 16
+            tool("drill", description="D", geometry={"DC": 4.2, "SFDM": 4.2, "LCF": 50, "LB": 60, "SIG": 118})])
+        self.assertEqual(result.skipped, [])
+        if change:
+            change(next(t for t in result.tools if t["name"] == "TM")["definition"])
+        proc = subprocess.Popen([CLI, "mcp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, text=True, encoding="utf-8")
+        timer = threading.Timer(120, proc.kill)
+        timer.start()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                library = camtools.write(result, Path(tmp) / "lib.camtools")
+                plate_with_hole(Path(tmp) / "part.stl", 4.2, depth)
+                session = _Session(proc)
+                session.request("initialize", {"protocolVersion": PROTOCOL_VERSION, "capabilities": {},
+                                               "clientInfo": {"name": "fusitool2craftool-tests", "version": "0"}})
+                session.notify("notifications/initialized")
+
+                def call(name, /, **arguments):
+                    r = session.request("tools/call", {"name": name, "arguments": arguments})
+                    self.assertFalse(r.get("isError"), f"{name}: {_content_text(r)}")
+                    return _content_text(r)
+
+                call("load_machine", builtin="VMC 3-axis")
+                call("import_model", path=str(Path(tmp) / "part.stl"), name="part")
+                call("set_stock", box={"dx": 30, "dy": 30, "dz": depth})
+                call("import_tool_library", path=str(library), mode="add", format="camtools")
+                for kind, name, mill, params in (("drill", "Dr", "D", {}), ("thread", "T", "TM", {"pitch": 0.8})):
+                    call("add_operation", kind=kind, name=name, tool=mill, source="part", params=params)
+                    self.assertEqual(json.loads(call("detect_holes", name=name))["holes"], 1)
+                    call("generate", name=name)
+                return json.loads(call("verify", name="T"))
+        finally:
+            timer.cancel()
+            _close(proc)
+
+    def assert_shank_hit(self, report: dict):
+        self.assertFalse(report["ok"])
+        self.assertEqual({f["kind"] for f in report["findings"]}, {"shank_hit"})
+        self.assertTrue(all(f["blocks_post"] for f in report["findings"]))
+
+    def test_within_the_reach(self):
+        report = self.verify_thread(14)
+        self.assertEqual(report["findings"], [])
+        self.assertTrue(report["ok"], report)
+
+    def test_deeper_than_the_reach_is_held(self):
+        self.assert_shank_hit(self.verify_thread(20))
+
+    def test_plain_shank_is_held(self):
+        # why the neck is written: the 4 mm shank right above the tooth hits
+        def plain(d):
+            d.pop("body")
+            d.update(shank_d=4.0, shank_len=52 - d["flute_len"], holder_d=50.0, holder_len=40.0)
+        self.assert_shank_hit(self.verify_thread(14, plain))
 
 
 if __name__ == "__main__":

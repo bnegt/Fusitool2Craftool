@@ -8,8 +8,9 @@ check the result in a headless CamCraft, or import it straight into a running
 CamCraft window. A Fusion script that exports **all** your tool libraries in
 one go is included.
 
-Pure Python 3.10+, no dependencies. Tested against CamCraft 0.25.0: all
-7,446 tools converted from 25 real libraries import without a change (see
+Pure Python 3.10+, no dependencies. For **CamCraft 0.26.0 or newer**; older
+versions may refuse a library. Tested against CamCraft 0.26.0: all
+7,585 tools converted from 22 real libraries import without a change (see
 [Testing against CamCraft](#testing-against-camcraft)).
 
 ## How to run
@@ -120,10 +121,10 @@ Windows). Without installing anything, the Linux `.tar.gz` holds
 `camcraft-cli` and `camcraft-ui` ready to run:
 
 ```sh
-curl -LO https://github.com/NeoTech/Camcraft/releases/download/v0.25.0/camcraft-0.25.0-linux-x86_64.tar.gz
-tar xzf camcraft-0.25.0-linux-x86_64.tar.gz
+curl -LO https://github.com/NeoTech/Camcraft/releases/download/v0.26.0/camcraft-0.26.0-linux-x86_64.tar.gz
+tar xzf camcraft-0.26.0-linux-x86_64.tar.gz
 python3 -m fusitool2craftool MyTools.tools --check \
-    --camcraft-cli ./camcraft-0.25.0-linux-x86_64/camcraft-cli
+    --camcraft-cli ./camcraft-0.26.0-linux-x86_64/camcraft-cli
 ```
 
 ### Optional: install as a command
@@ -202,9 +203,9 @@ This runs `camcraft-cli mcp --connect 127.0.0.1:7777` and calls CamCraft's
 | Option | Meaning |
 |---|---|
 | `--preset NAME` | Fusion preset to take rpm/feed from (default: each tool's first) |
-| `--material WORD` | CamCraft material the chosen preset is for: `aluminium_6061`, `mild_steel`, `stainless_304`, `grey_cast_iron`, `brass`, `plastics_pom` |
+| `--material WORD` | CamCraft material the chosen preset is for: `aluminium_6061`, `mild_steel`, `stainless_304`, `grey_cast_iron`, `brass`, `plastics_pom`, `softwood`, `hardwood`, `mdf`, `plywood`, `acrylic`, `hdpe` |
 | `--all-presets` | also write one cutting data row per Fusion preset whose name names a CamCraft material (see [Cutting data per material](#cutting-data-per-material)) |
-| `--unreleased-materials` | allow `softwood`, `hardwood`, `mdf`, `plywood`, `acrylic`, `hdpe`: CamCraft has them after 0.25.0, and 0.25.0 refuses a library that names them |
+| `--unreleased-materials` | allow material words that are only on CamCraft's main, which its latest release refuses (none at the moment) |
 | `--holder-d MM`, `--holder-len MM` | holder size for tools with no holder in Fusion (default 50 x 40) |
 | `--holder-cylinders` | write Fusion holders as one cylinder instead of their drawn outline |
 | `--default-rpm [KIND=]RPM`, `--default-feed [KIND=]MM_MIN` | speed / feed for tools Fusion gives none (otherwise skipped); see [Default speeds](#default-speeds) |
@@ -231,8 +232,7 @@ This runs `camcraft-cli mcp --connect 127.0.0.1:7777` and calls CamCraft's
 
 - Inch libraries are converted to mm (CamCraft only reads mm).
 - Stick-out: flute length `LCF`, shank length `LB - LCF`.
-- Undercut cutters (slot mills, slitting saws, lollipops, dovetails) need **CamCraft
-  0.25.0 or newer**; older versions refuse a library that holds one. The head
+- Undercut cutters (slot mills, slitting saws, lollipops, dovetails): the head
   is `DC` x `LCF`, the neck is the wider of Fusion's shaft (`SFDM`) and
   shoulder diameters (so CamCraft never lets the body pass where it would
   hit), and the neck length is `LB - LCF`. A lollipop's flute length is
@@ -250,6 +250,10 @@ This runs `camcraft-cli mcp --connect 127.0.0.1:7777` and calls CamCraft's
   mill) can plunge it, because it is center cutting. Its speeds still follow
   Fusion's drill rules: the feed is the plunge feed `v_f_plunge`, and a
   `--default-* drill=` value applies to it.
+- Chamfer mills, countersinks and drills with a flat tip (`tip-diameter`) are
+  written with a sharp point, with a warning: CamCraft has no tip diameter yet
+  ([NeoTech/Camcraft#895](https://github.com/NeoTech/Camcraft/issues/895)).
+  Near the tip the real cutter is wider than CamCraft's cone.
 - Single-form thread mills (`NT` 1, stored without `LCF`) cut any pitch from
   `TPN` to `TPX`. Their flute length is one coarsest pitch, the V's own
   height. CamCraft knows one shank cylinder, so the **neck** is written as the
@@ -258,8 +262,7 @@ This runs `camcraft-cli mcp --connect 127.0.0.1:7777` and calls CamCraft's
   Without a `shoulder-diameter` the neck is the tooth root at the coarsest
   pitch, `DC - 2 x 0.5413 x TPX`, with a warning: a wider neck could not cut
   that thread over its reach. With `--holder-cylinders` the one cylinder
-  starts at the neck's top and encloses shank and holder. Needs CamCraft
-  0.25.0 or newer. A thread mill that has an `LCF` stays multi-form, whatever
+  starts at the neck's top and encloses shank and holder. A thread mill that has an `LCF` stays multi-form, whatever
   its `NT`: in real libraries the same cutter is stored with `NT` 1 and 3, so
   `NT` alone does not tell.
 - Corner chamfer end mills become a `bull_nose`, with a warning: CamCraft has
@@ -289,7 +292,7 @@ This runs `camcraft-cli mcp --connect 127.0.0.1:7777` and calls CamCraft's
   `--material` is given). With `--all-presets` every preset can become a
   row of its own, see below.
 - Stand-alone holders: holder entries (and holder-only libraries) are
-  counted and reported, not converted. CamCraft 0.25.0's holder library is
+  counted and reported, not converted. CamCraft 0.26.0's holder library is
   built in (BT, CAT, ER, TTS) and `.camtools` carries tools only.
 - Vendor, product id, product link, flute count, tool material (HSS/carbide)
   and the Fusion tool number are carried over.
@@ -309,7 +312,7 @@ becomes a cutting data row for that material, so one file carries them all:
 | cast iron, gray/grey iron | `grey_cast_iron` |
 | brass | `brass` |
 | POM, acetal, Delrin, plastic | `plastics_pom` |
-| softwood/hardwood, MDF, plywood, acrylic, HDPE | the wood/plastic words, with `--unreleased-materials` only |
+| softwood/hardwood, MDF, plywood, acrylic, HDPE | `softwood`, `hardwood`, `mdf`, `plywood`, `acrylic`, `hdpe` |
 
 Fusion's own preset material field is empty in nearly every library, so the
 name is the only lead, and nothing is guessed: a name naming two materials
@@ -352,6 +355,7 @@ values, not cutting data.
 | reamer, counterbore | CamCraft has no kind for them ([NeoTech/Camcraft#897](https://github.com/NeoTech/Camcraft/issues/897)) |
 | form mill | CamCraft has no custom-profile mill (its `Form` kind is a lathe form gauge) |
 | lathe tools, probes, engraving | not mapped yet |
+| milling or drilling tools without a flute length (`LCF`) | nothing else Fusion states gives the cutting length: CamCraft would think the tool cuts along `shoulder-length`, `LB` or `OAL`, and could bury the shank or neck. Give the tool a flute length in Fusion. Single-form thread mills are the exception: their tooth height follows from the pitch |
 | tools without rpm/feed | skipped unless a [default](#default-speeds) is given |
 
 A ball end mill whose radius is within 10 % of D/2 is still a ball nose
@@ -392,13 +396,18 @@ written must come back as added, none renamed or skipped. It runs when
 otherwise:
 
 ```sh
-CAMCRAFT_CLI=~/camcraft-0.25.0-linux-x86_64/camcraft-cli \
+CAMCRAFT_CLI=~/camcraft-0.26.0-linux-x86_64/camcraft-cli \
     python3 -m unittest discover -s tests -t .
 ```
 
-Last run (CamCraft 0.25.0, 2026-11-23): 25 libraries, 7,446 tools written,
-7,446 imported, none renamed or skipped, with and without `--all-presets`
-(10,869 material rows).
+Last run (CamCraft 0.26.0, 2026-11-25): 22 libraries, 7,585 tools written
+with default speeds (7,517 without), all imported, none renamed or skipped,
+with and without `--all-presets` (11,269 material rows).
+
+The live tests also generate a real thread in CamCraft with a converted
+single-form thread mill: it must verify clean within the reach, and be held
+for a shank collision deeper than the reach, or with the plain shank. A shank no wider than the teeth is not caught by CamCraft past the
+reach, so mind the `shoulder-length` there.
 
 ### CamCraft upstream check
 
@@ -411,8 +420,9 @@ CamCraft can now handle the tools we skip
   [#896](https://github.com/NeoTech/Camcraft/issues/896) (roundover bits),
   [#897](https://github.com/NeoTech/Camcraft/issues/897) (reamers,
   counterbores) and [#3368](https://github.com/NeoTech/Camcraft/issues/3368)
-  (tapered mill tip forms) are still open
-- CamCraft's list of tool kinds is unchanged
+  (tapered mill tip forms; closed, waiting for a release) are still open
+- the tool kinds, material words and `.camtools` versions of CamCraft's
+  **latest release** are unchanged (what is only on main gives a skip note)
 
 If either fails, CamCraft has changed: update the converter, then update
 `BLOCKING_ISSUES` / `KNOWN_KINDS` in that test. Offline (or rate-limited) the

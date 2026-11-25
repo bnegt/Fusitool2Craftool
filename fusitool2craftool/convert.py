@@ -40,15 +40,13 @@ INCH = 25.4
 # CamCraft's workpiece material words (WorkMaterial::word in
 # crates/tools/src/cutting.rs). A word CamCraft does not know refuses the
 # whole library, so only released words are written by default.
-RELEASED_MATERIALS = (  # CamCraft 0.25.0
+RELEASED_MATERIALS = (  # CamCraft 0.26.0
     "aluminium_6061",
     "mild_steel",
     "stainless_304",
     "grey_cast_iron",
     "brass",
     "plastics_pom",
-)
-UNRELEASED_MATERIALS = (  # CamCraft main after 0.25.0 (cd217a00a); --unreleased-materials
     "softwood",
     "hardwood",
     "mdf",
@@ -56,6 +54,7 @@ UNRELEASED_MATERIALS = (  # CamCraft main after 0.25.0 (cd217a00a); --unreleased
     "acrylic",
     "hdpe",
 )
+UNRELEASED_MATERIALS: tuple[str, ...] = ()  # words on CamCraft's main only; --unreleased-materials
 MATERIALS = RELEASED_MATERIALS + UNRELEASED_MATERIALS
 
 # Fusion preset name -> CamCraft material, for --all-presets. Fusion's own
@@ -228,7 +227,7 @@ def convert(entries: list[dict], options: Options | None = None) -> Conversion:
     if options.material is not None and options.material not in options.materials():
         if options.material in MATERIALS:
             raise ValueError(
-                f"material {options.material!r} is newer than CamCraft 0.25.0, which refuses a "
+                f"material {options.material!r} is newer than the latest CamCraft release, which refuses a "
                 f"library that names it; pass --unreleased-materials for a newer CamCraft build"
             )
         raise ValueError(
@@ -356,6 +355,7 @@ def convert_tool(entry: dict, options: Options, presets_report: Counter | None =
         if not angle or angle <= 0:
             raise ToolRefused("no cone angle (TA/SIG)")
         d["tip_angle"] = angle
+        _warn_flat_tip(length, warnings)
     elif kind == "drill":
         angle = _num(g.get("SIG"))
         if not angle:
@@ -371,6 +371,7 @@ def convert_tool(entry: dict, options: Options, presets_report: Counter | None =
                             "CamCraft drills need a point, so drilling cycles won't offer it")
         else:
             d["tip_angle"] = angle
+            _warn_flat_tip(length, warnings)
     elif kind == "tap":
         pitch = length("TP")
         if not pitch or pitch <= 0:
@@ -540,6 +541,14 @@ def _undercut_refusal(d: dict) -> str | None:
 
 
 # --- helpers ---------------------------------------------------------------
+
+
+def _warn_flat_tip(length, warnings: list[str]) -> None:
+    """CamCraft's cones and drill points are sharp (NeoTech/Camcraft#895, #10)."""
+    tip = length("tip-diameter")
+    if tip and tip > 0:
+        warnings.append(f"flat tip of {tip:g} mm written as a sharp point: near the tip the real cutter is "
+                        f"wider than CamCraft's cone, check depths and clearances")
 
 
 def _corner_chamfer(d: dict, g: dict, length, warnings: list[str]) -> None:
@@ -1001,7 +1010,7 @@ def _preset_rows(entry: dict, chosen: dict | None, options: Options, rows: list[
             report[(name, "unmatched")] += 1
             continue
         if material not in options.materials():
-            report[(name, f"{material} needs a CamCraft newer than 0.25.0 (--unreleased-materials)")] += 1
+            report[(name, f"{material} needs a CamCraft newer than the latest release (--unreleased-materials)")] += 1
             continue
         if material in taken:
             report[(name, f"duplicate {material}")] += 1
