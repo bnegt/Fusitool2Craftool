@@ -11,7 +11,7 @@ from unittest import mock
 
 from fusitool2craftool import camtools
 from fusitool2craftool.cli import main
-from fusitool2craftool.convert import Options, convert, preset_material, why_not_sane
+from fusitool2craftool.convert import RELEASED_MATERIALS, Options, convert, preset_material, why_not_sane
 from fusitool2craftool.verify import verify_file
 from fusitool2craftool.fusion import FusionLibraryError, load_library, parse_library
 
@@ -335,11 +335,40 @@ class ConvertTests(unittest.TestCase):
             convert([tool()], Options(material="unobtainium"))
 
     def test_unreleased_material_needs_flag(self):
-        # CamCraft 0.25.0 refuses a library naming "mdf"
-        with self.assertRaisesRegex(ValueError, "--unreleased-materials"):
-            convert([tool()], Options(material="mdf"))
-        d, _ = one(tool(), Options(material="mdf", unreleased_materials=True))
-        self.assertEqual(d["cutting_data"][0]["material"], "mdf")
+        # as if "mdf" were on CamCraft's main only
+        released = tuple(m for m in RELEASED_MATERIALS if m != "mdf")
+        with mock.patch("fusitool2craftool.convert.RELEASED_MATERIALS", released):
+            with self.assertRaisesRegex(ValueError, "--unreleased-materials"):
+                convert([tool()], Options(material="mdf"))
+            d, _ = one(tool(), Options(material="mdf", unreleased_materials=True))
+            self.assertEqual(d["cutting_data"][0]["material"], "mdf")
+            result = convert([tool(presets=[{"name": "MDF", "n": 16000, "v_f": 3000}])], Options(all_presets=True))
+            self.assertIn("newer than the latest release", next(iter(result.presets))[1])
+
+    def test_wood_and_plastic_words_are_released(self):
+        # CamCraft 0.26.0
+        for word in ("softwood", "hardwood", "mdf", "plywood", "acrylic", "hdpe"):
+            d, _ = one(tool(), Options(material=word))
+            self.assertEqual(d["cutting_data"][0]["material"], word)
+
+    def test_flat_tip_is_warned_about(self):
+        for type_, geometry in (("chamfer mill", {"TA": 45}), ("counter sink", {"SIG": 82})):
+            for tip, warned in ((0.5, True), (0, False), (None, False)):
+                d, result = one(tool(type_, geometry={**geometry, "tip-diameter": tip}))
+                self.assertEqual(d["kind"], "taper")
+                self.assertEqual(any("flat tip of 0.5 mm" in w for w in result.warnings), warned)
+        for type_ in ("spot drill", "center drill"):
+            for tip, warned in ((0.5, True), (0, False)):
+                d, result = one(tool(type_, geometry={"SIG": 90, "tip-diameter": tip}))
+                self.assertEqual((d["kind"], any("flat tip" in w for w in result.warnings)), ("drill", warned))
+        _, result = one(tool("chamfer mill", unit="inches", geometry={"TA": 45, "tip-diameter": 0.01}))
+        self.assertTrue(any("flat tip of 0.254 mm" in w for w in result.warnings))
+
+    def test_no_flute_length_is_skipped(self):
+        # #7: no other Fusion field says how far up the tool cuts
+        e = tool(geometry={"shoulder-length": 20, "LB": 30})
+        del e["geometry"]["LCF"]
+        self.assertIn("no flute length", convert([e]).skipped[0].reason)
 
     def test_default_rpm_for_preset_without_speed_verifies(self):
         result = convert([tool(presets=[{"name": "Wood", "v_f": 900}])], Options(default_rpm=18000))
@@ -690,19 +719,19 @@ class PresetRowTests(unittest.TestCase):
             {"name": "4140 Steel", "n": 6000, "v_f": 500},
             {"name": "Aluminum finish", "n": 20000, "v_f": 1500},   # second aluminium: reported
             {"name": "Titanium", "n": 3000, "v_f": 200},            # no group: reported
-            {"name": "Hardwood", "n": 16000, "v_f": 3000},          # unreleased word: reported
+            {"name": "Hardwood", "n": 16000, "v_f": 3000},          # CamCraft 0.26.0
             {"name": "Acetal", "n": 12000},                         # no feed: reported
         ]
 
     def test_rows_per_material(self):
         result = convert([tool(presets=self.presets())], Options(all_presets=True))
         rows = result.tools[0]["definition"]["cutting_data"]
-        self.assertEqual([r["material"] for r in rows], ["unknown", "aluminium_6061", "mild_steel"])
+        self.assertEqual([r["material"] for r in rows], ["unknown", "aluminium_6061", "mild_steel", "hardwood"])
         self.assertEqual(rows[1], {"material": "aluminium_6061", "rpm": 18000, "feed": 2000, "stepdown": 3})
         outcomes = {name: outcome for (name, outcome) in result.presets}
         self.assertEqual(outcomes["Aluminum finish"], "duplicate aluminium_6061")
         self.assertEqual(outcomes["Titanium"], "unmatched")
-        self.assertIn("newer than 0.25.0", outcomes["Hardwood"])
+        self.assertEqual(outcomes["Hardwood"], "hardwood")
         self.assertEqual(outcomes["Acetal"], "no speeds")
         with tempfile.TemporaryDirectory() as tmp:
             path = camtools.write(result, Path(tmp) / "out.camtools")
@@ -711,7 +740,7 @@ class PresetRowTests(unittest.TestCase):
     def test_material_option_keeps_chosen_preset(self):
         # --material names the chosen (first) preset; a preset mapping to the same word is a duplicate
         result = convert([tool(presets=self.presets())],
-                         Options(all_presets=True, material="brass", unreleased_materials=True))
+                         Options(all_presets=True, material="brass"))
         rows = result.tools[0]["definition"]["cutting_data"]
         self.assertEqual([r["material"] for r in rows], ["brass", "mild_steel", "aluminium_6061", "hardwood"])
         self.assertEqual(rows[0]["rpm"], 18000)
@@ -836,6 +865,7 @@ def _private_libraries() -> list[Path]:
 # Third-party libraries (see TEST_LIBRARIES.md): they may hold
 # tool types we do not map yet, so only conversion and verification count.
 THIRD_PARTY = PRIVATE / "test-libraries"
+DEFAULT_SPEEDS = Options(default_vc=100, default_fz=0.02, default_feed=500, max_rpm=24000)
 
 
 @unittest.skipUnless(_private_libraries(), "no Fusion libraries in private/")
@@ -849,16 +879,21 @@ class PrivateLibraryTests(unittest.TestCase):
         for src in _private_libraries():
             with self.subTest(library=str(src.relative_to(PRIVATE))):
                 result = convert(load_library(src))
+                self.check(result)
+                # a catalog without presets converts on defaults only (#16's thread mills)
+                self.check(convert(load_library(src), DEFAULT_SPEEDS))
                 if not src.is_relative_to(THIRD_PARTY):
                     unexplained = [f"{s.name}: {s.reason}" for s in result.skipped if not s.category]
                     self.assertEqual(unexplained, [])
-                if not result.tools:
-                    continue  # holder-only / empty library
-                for t in result.tools:
-                    self.assertIsNone(why_not_sane(t["definition"]), t["name"])
-                with tempfile.TemporaryDirectory() as tmp:
-                    path = camtools.write(result, Path(tmp) / "out.camtools")
-                    self.assertEqual(verify_file(path, result), [])
+
+    def check(self, result):
+        if not result.tools:
+            return  # holder-only / empty library
+        for t in result.tools:
+            self.assertIsNone(why_not_sane(t["definition"]), t["name"])
+        with tempfile.TemporaryDirectory() as tmp:
+            path = camtools.write(result, Path(tmp) / "out.camtools")
+            self.assertEqual(verify_file(path, result), [])
 
 
 if __name__ == "__main__":

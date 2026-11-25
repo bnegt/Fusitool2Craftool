@@ -29,13 +29,18 @@ BLOCKING_ISSUES = {
 }
 
 # #14: stand-alone Fusion holders wait for a user holder library in a
-# *release*. #3645 brings it with .camtools v5; the release's reader is
-# the truth (main runs ahead), so the watch reads the latest release.
+# *release* (#3645). The release's reader is the truth (main runs ahead), so
+# the watch reads the latest release. .camtools versions 5 (drawn cutters,
+# NeoTech/Camcraft#3904) and 6 (taper tip forms, #3368) are on main and are
+# not the holder library.
 HOLDER_LIBRARY_ISSUE = 3645
 HOLDER_TRACKING = "https://github.com/bnegt/Fusitool2Craftool/issues/14"
-RELEASED_CAMTOOLS_VERSION = 4  # v0.25.0: VERSION 1 .. HOLDER_REF_VERSION 4
+RELEASED_CAMTOOLS_VERSION = 4  # v0.26.0: VERSION 1 .. HOLDER_REF_VERSION 4
 
-# CamCraft's ToolKind variants as of main @ 7a626a7f (v0.25.0).
+# A closed issue counts once the latest release's source holds its marker.
+RELEASE_MARKERS = {3368: ("crates/app/src/tool_library.rs", "TIP_FORM_VERSION")}
+
+# CamCraft's ToolKind variants as of v0.26.0.
 KNOWN_KINDS = {
     "EndMill", "BallNose", "BullNose", "Drill", "Tap", "Bore", "Turning",
     "Groove", "Thread", "Form", "Taper", "Probe", "Torch", "Waterjet",
@@ -81,9 +86,10 @@ class CamCraftUpstreamTests(unittest.TestCase):
         if newest > RELEASED_CAMTOOLS_VERSION:
             self.fail(
                 f"CamCraft {tag} reads .camtools version {newest} (was {RELEASED_CAMTOOLS_VERSION}): "
-                f"a user holder library (#{HOLDER_LIBRARY_ISSUE}) may be released. "
-                f"Stand-alone Fusion holders can now be converted, see {HOLDER_TRACKING}; "
-                f"then raise RELEASED_CAMTOOLS_VERSION."
+                f"5 is drawn cutters (the neck of a single-form thread mill could be one), "
+                f"6 is taper tip forms (#10), anything newer may be the user holder library "
+                f"(#{HOLDER_LIBRARY_ISSUE}, see {HOLDER_TRACKING}). "
+                f"Convert what is new, then raise RELEASED_CAMTOOLS_VERSION."
             )
         issue = _fetch(f"https://api.github.com/repos/{REPO}/issues/{HOLDER_LIBRARY_ISSUE}")
         if issue.get("state") != "open":
@@ -91,10 +97,12 @@ class CamCraftUpstreamTests(unittest.TestCase):
                           f"(still .camtools v{newest}): wait for the release, see {HOLDER_TRACKING}")
 
     def test_blocking_issues_still_open(self):
-        solved = []
+        solved, waiting = [], []
         for number, tools in BLOCKING_ISSUES.items():
             issue = _fetch(f"https://api.github.com/repos/{REPO}/issues/{number}")
-            if issue.get("state") != "open":
+            if issue.get("state") != "open" and not self._released(number):
+                waiting.append(f"CamCraft #{number} ({tools}) is closed but not in the latest release")
+            elif issue.get("state") != "open":
                 solved.append(
                     f"CamCraft #{number} '{issue.get('title')}' is {issue.get('state')} "
                     f"(closed {issue.get('closed_at')}): {tools} may now be supported"
@@ -104,20 +112,36 @@ class CamCraftUpstreamTests(unittest.TestCase):
                 "\n".join(solved)
                 + f"\nUpdate the converter, then remove the issue from BLOCKING_ISSUES. See {TRACKING}"
             )
+        if waiting:
+            self.skipTest("; ".join(waiting) + ": wait for the release")
+
+    def _released(self, number: int) -> bool:
+        if number not in RELEASE_MARKERS:
+            return True
+        path, marker = RELEASE_MARKERS[number]
+        tag = _fetch(f"https://api.github.com/repos/{REPO}/releases/latest")["tag_name"]
+        return marker in _fetch(f"https://api.github.com/repos/{REPO}/contents/{path}?ref={tag}", raw=True)
+
+    @staticmethod
+    def _kinds(ref: str) -> set[str]:
+        source = _fetch(f"https://api.github.com/repos/{REPO}/contents/crates/tools/src/tools.rs?ref={ref}", raw=True)
+        m = re.search(r"pub enum ToolKind\s*\{(.*?)\n\}", source, re.S)
+        return set(re.findall(r"^\s{4}([A-Z]\w*)\s*,", m.group(1), re.M)) if m else set()
 
     def test_tool_kinds_unchanged(self):
-        source = _fetch(
-            f"https://api.github.com/repos/{REPO}/contents/crates/tools/src/tools.rs", raw=True
-        )
-        m = re.search(r"pub enum ToolKind\s*\{(.*?)\n\}", source, re.S)
-        self.assertIsNotNone(m, "ToolKind enum not found in CamCraft's tools.rs")
-        kinds = set(re.findall(r"^\s{4}([A-Z]\w*)\s*,", m.group(1), re.M))
+        # The latest release decides; main only gives an early note.
+        tag = _fetch(f"https://api.github.com/repos/{REPO}/releases/latest")["tag_name"]
+        kinds = self._kinds(tag)
+        self.assertTrue(kinds, "ToolKind enum not found in CamCraft's tools.rs")
         added, removed = sorted(kinds - KNOWN_KINDS), sorted(KNOWN_KINDS - kinds)
         if added or removed:
             self.fail(
-                f"CamCraft tool kinds changed - added: {added or 'none'}, removed: {removed or 'none'}.\n"
+                f"CamCraft {tag} tool kinds changed - added: {added or 'none'}, removed: {removed or 'none'}.\n"
                 f"New kinds may cover skipped Fusion tools; update convert.py and KNOWN_KINDS. See {TRACKING}"
             )
+        coming = sorted(self._kinds("main") - KNOWN_KINDS)
+        if coming:
+            self.skipTest(f"on CamCraft's main but not in {tag}: {', '.join(coming)}")
 
     def test_released_materials_unchanged(self):
         # The converter writes only material words the latest CamCraft

@@ -58,11 +58,10 @@ def build_parser() -> argparse.ArgumentParser:
     conv.add_argument("--preset", help="Fusion preset name to take rpm/feed from (default: each tool's first)")
     conv.add_argument("--material", choices=MATERIALS, metavar="WORD",
                       help="CamCraft workpiece material the presets are for "
-                      f"({', '.join(RELEASED_MATERIALS)}; with --unreleased-materials also "
-                      f"{', '.join(UNRELEASED_MATERIALS)})")
+                      f"({', '.join(RELEASED_MATERIALS)})")
     conv.add_argument("--unreleased-materials", action="store_true",
-                      help="allow the wood/plastic material words CamCraft has after 0.25.0 "
-                      "(0.25.0 refuses a library that names them)")
+                      help="allow material words CamCraft has only after its latest release "
+                      f"(now: {', '.join(UNRELEASED_MATERIALS) or 'none'})")
     conv.add_argument("--all-presets", action="store_true",
                       help="also write one cutting data row per Fusion preset whose name names a "
                       "CamCraft material (e.g. '6061 aluminum', '4140 steel', 'acetal'); "
