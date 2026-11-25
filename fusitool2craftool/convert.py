@@ -308,6 +308,9 @@ def convert_tool(entry: dict, options: Options, presets_report: Counter | None =
     kind = KINDS.get(ftype)
     if ftype == "tapered mill":
         kind, ftype = _tapered_type(entry, options)
+    elif ftype == "form mill":
+        from . import threadform
+        kind = "thread_mill" if threadform.is_named(entry) else None
     if kind is None:
         raise ToolRefused(f"Fusion tool type '{ftype or '?'}' has no CamCraft counterpart yet")
 
@@ -325,7 +328,7 @@ def convert_tool(entry: dict, options: Options, presets_report: Counter | None =
     if dc is None or dc <= 0:
         raise ToolRefused("no cutting diameter (DC)")
     lcf = length("LCF")
-    if kind == "thread_mill" and not lcf and _num(g.get("NT")) == 1:
+    if ftype != "form mill" and kind == "thread_mill" and not lcf and _num(g.get("NT")) == 1:
         # One row of teeth, stored without a flute length (#16): the V's own
         # axial size is one pitch, the coarsest it cuts.
         kind = "thread_mill_single"
@@ -437,6 +440,11 @@ def convert_tool(entry: dict, options: Options, presets_report: Counter | None =
         d["pitch"] = pitch
         if ftype == "tap left hand":
             d["thread_hand"] = "left"
+    elif ftype == "form mill":
+        form = threadform.read(entry, dc, lcf, body)
+        d["pitch"], d["tip_angle"], d["flute_len"] = form.pitch, 60.0, form.flute_len
+        d["shank_d"], d["shank_len"], below = _split_neck(form.shaft)
+        warnings.append(f"thread mill stored as a form mill: {form.pitch:.6g} mm pitch read from its outline")
     elif kind == "thread_mill":
         pitch = length("TP")
         angle = _num(g.get("thread-profile-angle")) or 60.0
