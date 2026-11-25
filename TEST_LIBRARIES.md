@@ -63,7 +63,7 @@ python3 tests/get_autodesk_libraries.py --update       # again, after a vendor's
 
 The site had no file for 7 of them (it answers "Failed to download file").
 Counts on 2026-11-25; "Convert" is without defaults (a catalog without speeds,
-or with only placeholder speeds, gives none), "With defaults" uses the tests' default speeds:
+or with only placeholder or default speeds, gives none), "With defaults" uses the tests' default speeds:
 
 | Library (catalogue name) | Entries | Convert | With defaults | Mostly |
 |---|---|---|---|---|
@@ -100,11 +100,11 @@ or with only placeholder speeds, gives none), "With defaults" uses the tests' de
 | Kennametal/Kennametal | - | - | - | not available |
 | Iscar/Iscar Hole Making Imperial | 289 | 0 | 289 | drill |
 | Iscar/Iscar Hole Making Metric | 1,156 | 0 | 1,156 | drill |
-| Iscar/Iscar Solid End Mills Imperial | 3,249 | 3,249 | 3,249 | bull nose end mill, flat end mill, ball end mill |
-| Iscar/Iscar Solid End Mills Metric | 2,564 | 2,564 | 2,564 | bull nose end mill, flat end mill, ball end mill |
-| Fraiser Tools/Boss Beaver | 123 | 119 | 119 | flat end mill, drill, chamfer mill |
+| Iscar/Iscar Solid End Mills Imperial | 3,249 | 0 | 3,249 | bull nose end mill, flat end mill, ball end mill |
+| Iscar/Iscar Solid End Mills Metric | 2,564 | 0 | 2,564 | bull nose end mill, flat end mill, ball end mill |
+| Fraiser Tools/Boss Beaver | 123 | 103 | 119 | flat end mill, drill, chamfer mill |
 | Fraiser Tools/Carbider Poly | 114 | 114 | 114 | flat end mill, chamfer mill, face mill |
-| XEBEC/XEBEC Deburring tools | 42 | 42 | 42 | lollipop mill |
+| XEBEC/XEBEC Deburring tools | 42 | 0 | 42 | lollipop mill |
 | Schunk/Schunk Holders | 642 | 0 | 0 | holder |
 | Kennametal/Turning Imperial/Turning Imperial | 57 | 55 | 55 | turning general, turning boring, turning grooving |
 | Kennametal/Turning Metric/Turning Metric | - | - | - | not available |
@@ -119,7 +119,7 @@ or with only placeholder speeds, gives none), "With defaults" uses the tests' de
 | Ingersoll/Turning Metric/Turning Metric | - | - | - | not available |
 | Widia/Turning Imperial/Turning Imperial | - | - | - | not available |
 | Widia/Turning Metric/Turning Metric | - | - | - | not available |
-| **Total** | **134,498** | **16,334** | **125,904** | |
+| **Total** | **134,498** | **10,463** | **125,904** | |
 
 The tools skipped even with defaults, by reason: form mill 2,742; tapered mill
 925; reamer 876; counterbore 434; dovetail with a corner radius 372; radius

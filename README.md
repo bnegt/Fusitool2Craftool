@@ -403,6 +403,15 @@ row is listed with the reason (`unmatched`, `duplicate <material>`,
   warning. A partial profile threading insert is written for its `TP` (the
   coarsest pitch, in vendor libraries), with a warning if Fusion states a range.
 
+### Speeds to check
+
+Fusion's speeds are written as they are, but a **very high feed** gets a
+warning ([#45](https://github.com/bnegt/Fusitool2Craftool/issues/45)): over 5 % of the
+diameter per tooth, or per turn for a drill. Some are vendor errors (IMCO,
+Delta), some are real (high-feed cutters). Taps and thread mills are fed by the
+pitch, and a tool at 1 rpm does not turn (a drag engraver), so neither is
+judged. Your own `--default-*` values are not judged either.
+
 ### Default speeds
 
 Vendor catalogs often have no presets, or only a placeholder. Without help
@@ -412,6 +421,13 @@ Helical, SwiftCARB, Valor and MA Ford ship every tool with one). It states no
 speeds, so another preset is used if there is one
 ([#35](https://github.com/bnegt/Fusitool2Craftool/issues/35)). 1 rpm with a
 real feed is kept: that is a drag engraver.
+
+**Fusion's default preset** states no speeds either
+([#45](https://github.com/bnegt/Fusitool2Craftool/issues/45)): 5,000 rpm,
+1,000 mm/min (or 40 in/min) and a third of that to plunge; on a drill 5,000 rpm
+and 1,000 mm/min to plunge. Fusion gives it to any new tool, whatever its size,
+and all of Iscar's solid end mills have it. If you want exactly these values,
+give them as defaults.
 
 | Option | Gives |
 |---|---|
@@ -485,7 +501,7 @@ the tools but **no operation cuts with a flat or ball tip yet**.
 | waterjet, laser and plasma cutter; laser powder, laser wire and electric arc wire | cutting and additive heads, not cutters |
 | `shaft`, `tool block` | parts of a holder, not cutters |
 | milling or drilling tools without a flute length (`LCF`) | nothing else Fusion states gives the cutting length: CamCraft would think the tool cuts along `shoulder-length`, `LB` or `OAL`, and could bury the shank or neck. Give the tool a flute length in Fusion. Single-form thread mills are the exception: their tooth height follows from the pitch |
-| tools without rpm/feed, or with only a placeholder | skipped unless a [default](#default-speeds) is given |
+| tools without rpm/feed, or with only a placeholder or Fusion's default preset | skipped unless a [default](#default-speeds) is given |
 
 A ball end mill whose radius is within 10 % of D/2 is still a ball nose
 (vendors round imperial radii, e.g. 1/8" listed as R1.5). A tool CamCraft
@@ -535,8 +551,8 @@ CAMCRAFT_CLI=~/camcraft-0.26.0-linux-x86_64/camcraft-cli \
 ```
 
 Last run (CamCraft 0.26.0, 2026-11-25): 65 libraries, 133,591 tools written
-with default speeds (23,951 without), all imported, none renamed or skipped,
-with and without `--all-presets` (37,276 material rows). 40 of the libraries
+with default speeds (18,005 without), all imported, none renamed or skipped,
+with and without `--all-presets` (37,278 material rows). 40 of the libraries
 and 125,904 of the tools are Autodesk's vendor libraries; with them the whole
 suite takes about 2.5 minutes (1 minute without CamCraft).
 

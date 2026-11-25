@@ -724,6 +724,108 @@ class PlaceholderSpeedTests(unittest.TestCase):
         self.assertTrue(any("match no Fusion preset" in p for p in self.verifies(result)))
 
 
+class SpeedWarningTests(unittest.TestCase):
+    """#45: Fusion's default preset states no speeds; a very high feed is written with a warning."""
+
+    @staticmethod
+    def speed_warnings(entry, options=None):
+        d, result = one(entry, options)
+        return d, [w for w in result.warnings if "check them before" in w or "check it before" in w]
+
+    def mill(self, n, v_f, type_="flat end mill", unit="millimeters", geometry=None, **preset):
+        return tool(type_, unit=unit, geometry={"DC": 10, "NOF": 4, **(geometry or {})},
+                    presets=[{"name": "P", "n": n, "v_f": v_f, **preset}])
+
+    DEFAULTS = (("millimeters", 1000, 333.333), ("inches", 39.37007874, 13.12335958), ("inches", 40, 13.33333))
+
+    def default(self, unit, feed, plunge, **extra):
+        return tool(unit=unit, geometry={"DC": 0.5, "LCF": 1, "LB": 2, "SFDM": 0.5, "NOF": 2},
+                    presets=[{"name": "Default preset", "n": 5000, "v_f": feed, "v_f_plunge": plunge}], **extra)
+
+    def verifies(self, result):
+        with tempfile.TemporaryDirectory() as tmp:
+            return verify_file(camtools.write(result, Path(tmp) / "out.camtools"), result)
+
+    def test_fusions_default_preset_states_no_speeds(self):
+        for values in self.DEFAULTS:
+            result = convert([self.default(*values)])
+            self.assertEqual(result.tools, [])
+            self.assertIn("only Fusion's default spindle speed", result.skipped[0].reason)
+            d, result = one(self.default(*values), Options(default_rpm=20000, default_feed=300))
+            self.assertEqual((d["rpm"], d["feed"]), (20000, 300))
+            self.assertTrue(any("only Fusion's default spindle speed" in w for w in result.warnings))
+            self.assertEqual(self.verifies(result), [])
+
+    def test_fusions_default_for_a_drill(self):
+        for unit, plunge in (("millimeters", 1000), ("inches", 40)):
+            for v_f in (0, None):
+                e = tool("drill", unit=unit, geometry={"DC": 0.5, "LCF": 1, "LB": 2, "SFDM": 0.5, "SIG": 118},
+                         presets=[{"name": "Default preset", "n": 5000, "v_f": v_f, "v_f_plunge": plunge}])
+                self.assertIn("only Fusion's default", convert([e]).skipped[0].reason)
+                d, result = one(e, Options(default_rpm=1200, default_feed=80))
+                self.assertEqual((d["rpm"], d["feed"]), (1200, 80))
+                self.assertEqual(self.verifies(result), [])
+        # AP4060's drills have Fusion's 5,000 rpm, but a feed of their own
+        e = tool("drill", geometry={"SIG": 118}, presets=[{"name": "Default preset", "n": 5000, "v_f_plunge": 100}])
+        self.assertEqual((one(e)[0]["rpm"], one(e)[0]["feed"]), (5000, 100))
+
+    def test_a_real_preset_beats_fusions_default(self):
+        e = self.default(*self.DEFAULTS[0])
+        e["start-values"]["presets"].append({"name": "Steel", "n": 9000, "v_f": 400})
+        d, result = one(e)
+        self.assertEqual((d["rpm"], d["feed"]), (9000, 400))
+        self.assertEqual(self.verifies(result), [])
+
+    def test_fusions_default_is_no_material_row(self):
+        e = tool(presets=[{"name": "Steel", "n": 4000, "v_f": 300},
+                          {"name": "6061 aluminum", "n": 5000, "v_f": 1000, "v_f_plunge": 333.333}])
+        result = convert([e], Options(all_presets=True))
+        self.assertIn(("6061 aluminum", "no speeds"), result.presets)
+        self.assertNotIn(5000, [r["rpm"] for r in result.tools[0]["definition"].get("cutting_data", [])])
+
+    def test_output_check_refuses_fusions_default(self):
+        d, result = one(self.default(*self.DEFAULTS[0]), Options(default_rpm=20000, default_feed=300))
+        d.update(rpm=5000.0, feed=1000.0)
+        self.assertTrue(any("match no Fusion preset" in q for q in self.verifies(result)))
+
+    def test_near_misses_are_not_the_default(self):
+        for n, feed, plunge in ((5000, 1000, 300), (5000, 900, 300), (6000, 1000, 333.333), (5000, 1000, None)):
+            self.assertEqual(self.speed_warnings(self.mill(n, feed, v_f_plunge=plunge))[1], [])
+
+    def test_high_feed_per_tooth(self):
+        # 5 % of 10 mm on 4 flutes: 0.5 mm per tooth
+        self.assertEqual(self.speed_warnings(self.mill(1000, 2000))[1], [])
+        # Mitsubishi CRN2XLB: 5 % to the last float
+        self.assertEqual(self.speed_warnings(self.mill(39258.2, 39258.2 * 2 * 0.3 * 0.05, geometry={"DC": 0.3, "NOF": 2}))[1], [])
+        d, found = self.speed_warnings(self.mill(1000, 2400))
+        self.assertIn("0.6 mm per tooth, 6 % of the 10 mm diameter", found[0])
+        self.assertEqual((d["rpm"], d["feed"]), (1000, 2400))
+
+    def test_without_a_flute_count_it_is_per_turn(self):
+        self.assertEqual(len(self.speed_warnings(self.mill(1000, 600, geometry={"NOF": None}))[1]), 1)
+
+    def test_drill_is_judged_per_turn(self):
+        for feed, n in ((490, 0), (510, 1)):
+            e = self.mill(1000, 0, "drill", geometry={"SIG": 118}, v_f_plunge=feed)
+            self.assertEqual(len(self.speed_warnings(e)[1]), n)
+
+    def test_tapered_mill_is_judged_at_its_widest(self):
+        # 2 mm tip, 4.1 mm wide: 0.15 mm per tooth is 7 % of the tip, 3.7 % of the widest
+        e = tapered(presets=[{"name": "P", "n": 1000, "v_f": 300}])
+        e["geometry"]["NOF"] = 2
+        self.assertEqual(self.speed_warnings(e, TAPERS)[1], [])
+
+    def test_fed_by_the_pitch_or_not_turning(self):
+        for e in (tool("tap right hand", geometry={"DC": 8, "TP": 1.25}, presets=[{"name": "P", "n": 500}]),
+                  tool("thread mill", geometry={"DC": 3, "LCF": 6, "TP": 0.5, "NOF": 1}, presets=[{"name": "P", "n": 1000, "v_f": 400}]),
+                  self.mill(1, 100, "chamfer mill", unit="inches", geometry={"TA": 45}, v_f_plunge=25)):
+            self.assertEqual(self.speed_warnings(e)[1], [])
+
+    def test_defaults_are_the_users_choice(self):
+        e = tool(geometry={"DC": 0.2, "NOF": 2}, presets=[])
+        self.assertEqual(self.speed_warnings(e, Options(default_rpm=5000, default_feed=1000))[1], [])
+
+
 class SharpDrillAndSawTests(unittest.TestCase):
     """#31: points of 60 degrees or less, and saws without a shank."""
 
