@@ -405,7 +405,7 @@ values, not cutting data.
 | form mill | CamCraft has no custom-profile mill (its `Form` kind is a lathe form gauge) |
 | internal and face grooving, round grooving, internal threading tools | CamCraft's blade and threading insert are outside tools, and its blade is square |
 | threading tools without a pitch (`TP`) or with a form other than 60 degrees | no known V width ([#20](https://github.com/bnegt/Fusitool2Craftool/issues/20)) |
-| dovetail mill with a corner radius | CamCraft's dovetail has a sharp corner. Fusion's `DC` is at the top of the radius, so CamCraft's whole flank would be too thin (up to 1.3 mm in vendor libraries) and it would miss a gouge |
+| dovetail mill with a corner radius | CamCraft's dovetail has a sharp corner. Fusion's `DC` is at the top of the radius, so CamCraft's whole flank would be too thin (up to 1.3 mm in vendor libraries) and it would miss a gouge ([NeoTech/Camcraft#4004](https://github.com/NeoTech/Camcraft/issues/4004)) |
 | circle segment mill (barrel, lens, oval, taper) | CamCraft has no kind for them |
 | probe | not a cutter |
 | waterjet, laser and plasma cutter; laser powder, laser wire and electric arc wire | cutting and additive heads, not cutters |
@@ -485,8 +485,10 @@ CamCraft can now handle the tools we skip
   (tapered ball mills, V-bit tip diameter),
   [#896](https://github.com/NeoTech/Camcraft/issues/896) (roundover bits),
   [#897](https://github.com/NeoTech/Camcraft/issues/897) (reamers,
-  counterbores) and [#3368](https://github.com/NeoTech/Camcraft/issues/3368)
-  (tapered mill tip forms; closed, waiting for a release) are still open
+  counterbores), [#3368](https://github.com/NeoTech/Camcraft/issues/3368)
+  (tapered mill tip forms; closed, waiting for a release) and
+  [#4004](https://github.com/NeoTech/Camcraft/issues/4004) (dovetails with a
+  corner radius) are still open
 - the tool kinds, material words and `.camtools` versions of CamCraft's
   **latest release** are unchanged (what is only on main gives a skip note)
 
