@@ -78,7 +78,13 @@ def compare(d: dict, entry: dict, options=None) -> list[str]:
         v = g.get(key)
         return float(v) * unit if isinstance(v, (int, float)) and not isinstance(v, bool) else None
 
-    check("diameter", f("DC"), "DC")
+    tapered = ftype == "tapered mill" and bool(g.get("TA"))
+    if tapered:
+        out.extend(_tapered_problems(d, f, float(g["TA"]), check))
+    else:
+        check("diameter", f("DC"), "DC")
+        if d.get("tip_form") or d.get("tip_diameter"):
+            out.append(f"tip form {d.get('tip_form')!r} on a Fusion {ftype}")
     flute, flute_key = f("LCF"), "LCF"
     body_end = None
     if ftype in ("slot mill", "lollipop mill", "dovetail mill"):
@@ -148,6 +154,12 @@ def compare(d: dict, entry: dict, options=None) -> list[str]:
         check("corner_r", min(legs), "chamfer (shorter leg)")
     if single:
         allowed = {"thread_mill_single"}
+    if tapered:
+        allowed = {"taper"}
+    elif ftype == "tapered mill":  # no taper angle: a straight cutter (#10)
+        re_, dc = f("RE") or 0.0, f("DC") or 0.0
+        allowed = {"end_mill"} if not re_ else {"ball_nose"} if re_ >= dc / 2 * (1 - 1e-6) else {"bull_nose"}
+        check("corner_r", min(re_, dc / 2), "RE")
     if d.get("kind") not in allowed:
         out.append(f"kind is {d.get('kind')!r}, Fusion type '{ftype}' gives {base_kind!r}")
 
@@ -284,6 +296,33 @@ def _lathe_speeds_match(d: dict, p: dict, kind: str, unit: float, pitch: float, 
     return _close(d.get("feed"), feed)
 
 
+def _tapered_problems(d: dict, f, ta: float, check) -> list[str]:
+    """A tapered mill's cone and tip (#10), from where its outline has to run.
+
+    The cone goes through Fusion's DC at the tip and opens TA a side. At
+    every height the written cutter must be at least as wide, and the tip
+    must touch the bottom and the cone.
+    """
+    out: list[str] = []
+    dc, re_, lcf = f("DC") or 0.0, f("RE") or 0.0, f("LCF") or 0.0
+    slope = math.tan(math.radians(ta))
+    check("tip_angle", 2 * ta, "2 x TA")
+    check("corner_r", re_, "RE")
+    # the tangent length from a corner to a fillet is R / tan(half the corner's inside angle)
+    need = re_ * math.tan(math.radians(45 - ta / 2))
+    form, start = d.get("tip_form"), dc / 2
+    if re_ and need >= dc / 2 - 1e-3:
+        if form != "ball" or d.get("tip_diameter"):
+            out.append(f"tip is {form!r} ({d.get('tip_diameter')} mm), Fusion's RE leaves no flat: a ball")
+        start = max(start, need)
+    else:
+        if form != "flat":
+            out.append(f"tip is {form!r}, Fusion's RE leaves a flat of {round(dc - 2 * need, 4)} mm")
+        check("tip_diameter", dc, "DC")
+    check("diameter", 2 * (start + lcf * slope), "DC + 2 x LCF x tan TA")
+    return out
+
+
 def _single_neck(g: dict, f, body) -> tuple[float, float] | None:
     """(reach, neck diameter) of a single-form thread mill, or None without a neck (#16)."""
     tooth = f("TPX") or f("TP")
@@ -333,6 +372,8 @@ def _matching_preset(entry: dict, d: dict, options=None) -> dict | None:
     if not (_is_num(rpm) and _is_num(feed)):
         return None
     dia = g["DC"] * unit if _is_num(g.get("DC")) else 0.0
+    if str(entry.get("type", "")).strip().lower() == "tapered mill" and g.get("TA"):
+        dia = d.get("diameter") or 0.0  # v_c holds at the widest, not at the tip (#10)
     nof = g.get("NOF")
     flutes = int(nof) if _is_num(nof) and float(nof).is_integer() and nof >= 1 else None  # teeth, uncapped
     presets = presets_of(entry) or ([{}] if options is not None else [])

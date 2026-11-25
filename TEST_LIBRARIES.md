@@ -6,9 +6,9 @@ download them into `private/test-libraries/` (git-ignored). The tests then
 convert and verify every one of them (`PrivateLibraryTests` in
 `tests/test_convert.py`).
 
-Last checked 2026-11-25 (with default speeds): 64 libraries convert, 134,613
+Last checked 2026-11-25 (with default speeds): 64 libraries convert, 134,619
 tools written, all verified and accepted by CamCraft 0.26.0 (with and without
-`--all-presets`): 24 of the sources below with 7,677 tools, and 40 of
+`--all-presets`): 24 of the sources below with 7,683 tools, and 40 of
 [Autodesk's vendor libraries](#autodesks-vendor-libraries) with 126,936. The
 others convert to nothing: `OMAX.json` (one waterjet), three holder libraries
 and two probe libraries.
@@ -169,7 +169,7 @@ or is skipped under a family name
 | spot drill | 1,249 | 16 | `drill` (`taper` for a point of 60 degrees or less) |
 | tap left hand | 1 | 1 | `tap` |
 | tap right hand | 2,744 | 7 | `tap` |
-| tapered mill | 967 | 11 | skipped: tapered mill |
+| tapered mill | 967 | 11 | skipped: tapered mill (`taper` with `--unreleased-tapers`; straight without an angle) |
 | thread mill | 206 | 5 | `thread_mill` |
 | tool block | **none** | - | skipped: holder part |
 | turning boring | 200 | 8 | `bore` |

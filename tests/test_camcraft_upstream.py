@@ -94,7 +94,7 @@ class CamCraftUpstreamTests(unittest.TestCase):
             self.fail(
                 f"CamCraft {tag} reads .camtools version {newest} (was {RELEASED_CAMTOOLS_VERSION}): "
                 f"5 is drawn cutters (the neck of a single-form thread mill could be one), "
-                f"6 is taper tip forms (#10), anything newer may be the user holder library "
+                f"6 is taper tip forms (#10: --unreleased-tapers can become the default), anything newer may be the user holder library "
                 f"(#{HOLDER_LIBRARY_ISSUE}, see {HOLDER_TRACKING}). "
                 f"Convert what is new, then raise RELEASED_CAMTOOLS_VERSION."
             )

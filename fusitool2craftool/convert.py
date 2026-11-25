@@ -100,6 +100,7 @@ MAX_NOTES = 500
 VERSION = 1
 LEFT_HAND_VERSION = 2
 CUTTING_STEPS_VERSION = 3
+TIP_FORM_VERSION = 6  # flat and ball taper tips; on CamCraft's main only (#10)
 
 # Fusion tool type -> CamCraft kind. Types not listed are skipped by name.
 KINDS = {
@@ -132,6 +133,7 @@ KINDS = {
 UNDERCUT = ("t_slot", "keyseat", "lollipop", "dovetail")
 
 DEFAULT_DRILL_ANGLE = 118.0
+BALL_TIP_FIT = 1e-3  # mm; a flat face narrower than this under a tapered mill's radius is a ball tip
 MIN_DRILL_ANGLE = 60.0  # CamCraft's drill kind wants a point over this (tool_sanity.rs)
 
 # thread_mill.rs: radial depth of an internal / external 60 degree thread
@@ -176,6 +178,8 @@ class Options:
     """Also write one cutting data row per preset whose name names a material."""
     unreleased_materials: bool = False
     """Allow the material words CamCraft has after its latest release."""
+    unreleased_tapers: bool = False
+    """Write tapered mills (#10). CamCraft's latest release refuses the file."""
 
     def materials(self) -> tuple[str, ...]:
         return MATERIALS if self.unreleased_materials else RELEASED_MATERIALS
@@ -301,6 +305,8 @@ def convert_tool(entry: dict, options: Options, presets_report: Counter | None =
     warnings: list[str] = []
     ftype = str(entry.get("type", "")).strip().lower()
     kind = KINDS.get(ftype)
+    if ftype == "tapered mill":
+        kind, ftype = _tapered_type(entry, options)
     if kind is None:
         raise ToolRefused(f"Fusion tool type '{ftype or '?'}' has no CamCraft counterpart yet")
 
@@ -387,7 +393,9 @@ def convert_tool(entry: dict, options: Options, presets_report: Counter | None =
     if kind in UNDERCUT:
         below = _undercut(d, entry, length, body, warnings)
 
-    if kind == "taper":
+    if ftype == "tapered mill":
+        _tapered_mill(d, _num(g["TA"]), length("RE") or 0.0, warnings)
+    elif kind == "taper":
         if ftype == "chamfer mill":
             ta = _num(g.get("TA"))
             angle = 2 * ta if ta else None
@@ -460,7 +468,9 @@ def convert_tool(entry: dict, options: Options, presets_report: Counter | None =
     flutes = int(nof) if nof is not None and float(nof).is_integer() and nof >= 1 else None
     # a flat bottom or sharply pointed drill keeps Fusion's drill speeds (its feed is v_f_plunge)
     speed_kind = "drill" if kind == "drill" else d["kind"]
-    rpm, feed, preset = _speeds(entry, options, unit, warnings, speed_kind, d["pitch"], dc, flutes,
+    # a tapered mill's DC is its tip: --default-vc holds at its widest
+    speed_d = d["diameter"] if ftype == "tapered mill" else dc
+    rpm, feed, preset = _speeds(entry, options, unit, warnings, speed_kind, d["pitch"], speed_d, flutes,
                                 defaults_report if defaults_report is not None else Counter())
     d["material_group"] = _material_group(preset, options)
     d["rpm"] = rpm
@@ -559,6 +569,10 @@ def why_not_sane(d: dict) -> str | None:
         return "a tap's thread pitch must be over 0"
     if kind == "taper" and a <= 0:
         return "a chamfer mill's cone angle must be over 0"
+    if "tip_form" in d:
+        why = _tip_refusal(d)
+        if why:
+            return why
     if kind in ("thread_mill", "thread_mill_single"):
         if not 0 < a < 180:
             return f"a thread mill's form angle {a} degrees must be over 0 and under 180"
@@ -584,6 +598,35 @@ def why_not_sane(d: dict) -> str | None:
         for k in ("stepdown", "stepover"):
             if k in row and not (math.isfinite(row[k]) and row[k] > 0):
                 return f"cutting data {k} must be over 0"
+    return None
+
+
+def _tip_refusal(d: dict) -> str | None:
+    """CamCraft's rules for a flat or ball taper tip (crates/tools/src/taper.rs, on main)."""
+    dia, cr, td, a = d["diameter"], d["corner_r"], d.get("tip_diameter", 0.0), d["tip_angle"]
+    if d["kind"] != "taper" or d["tip_form"] not in ("flat", "ball"):
+        return f"a {d['kind']} cannot have a {d['tip_form']} tip"
+    if not 0 < a < 180:
+        return f"a chamfer mill's cone angle {a} degrees must be over 0 and under 180"
+    half = math.radians(a) / 2
+    if d["tip_form"] == "flat":
+        if not 0 < td < dia:
+            return f"a flat tip's diameter {td} mm must be over 0 and under the {dia} mm diameter"
+        flat = td / 2 - cr * (1 - math.sin(half)) / math.cos(half)
+        if flat < 0:
+            return f"the {cr} mm corner radius does not fit the {td} mm flat tip of a {a} degree cone"
+    else:
+        flat = 0.0
+        if cr <= 0:
+            return f"a ball tip's radius {cr} mm must be over 0"
+        if td != 0:
+            return f"a ball tip's diameter {td} mm must be 0"
+    meets = flat + cr * math.cos(half)
+    if meets >= dia / 2:
+        return f"the {d['tip_form']} tip meets the cone {2 * meets:g} mm across, not under the {dia} mm diameter"
+    tall = cr * (1 - math.sin(half))
+    if tall >= d["flute_len"]:
+        return f"the {d['tip_form']} tip is {tall:g} mm tall, not under the {d['flute_len']} mm flute length"
     return None
 
 
@@ -627,6 +670,55 @@ def _warn_flat_tip(length, warnings: list[str]) -> None:
     if tip and tip > 0:
         warnings.append(f"flat tip of {tip:g} mm written as a sharp point: near the tip the real cutter is "
                         f"wider than CamCraft's cone, check depths and clearances")
+
+
+def _tapered_type(entry: dict, options: Options) -> tuple[str, str]:
+    """(CamCraft kind, Fusion type to read it as) of a tapered mill (#10).
+
+    Without a taper angle it is a straight cutter (some core box and bowl
+    bits are stored that way), unless its name says it has a taper.
+    """
+    g = entry.get("geometry") or {}
+    ta = _num(g.get("TA")) or 0.0
+    if ta == 0:
+        if "taper" in str(entry.get("description", "")).lower():
+            raise ToolRefused("tapered mill without a taper angle (TA 0)")
+        return ("bull_nose", "bull nose end mill") if _num(g.get("RE")) else ("end_mill", "flat end mill")
+    if not 0 < ta < 90:
+        raise ToolRefused(f"tapered mill's angle (TA) {ta:g} must be over 0 and under 90 degrees")
+    if not options.unreleased_tapers:
+        raise ToolRefused("tapered mill: its tip form needs a CamCraft newer than 0.26.0 (--unreleased-tapers)")
+    return "taper", "tapered mill"
+
+
+def _tapered_mill(d: dict, ta: float, re_: float, warnings: list[str]) -> None:
+    """A tapered mill as CamCraft's taper with a flat or ball tip (#10).
+
+    Fusion's ``DC`` is the cone's diameter extended down to the tip and
+    ``TA`` its angle off the axis. CamCraft's ``diameter`` is the widest one,
+    ``tip_angle`` the included angle, and ``tip_diameter`` Fusion's ``DC``.
+    ``RE`` rounds the tip's corner: where it leaves no flat face it is a
+    ball, tangent to the cone.
+    """
+    half, tip = math.radians(ta), d["diameter"]
+    cone = re_ * (1 - math.sin(half)) / math.cos(half)  # the radius at the tip of a cone tangent to that ball
+    flat = tip / 2 - cone
+    d["tip_angle"] = 2 * ta
+    d["corner_r"] = re_
+    if flat > BALL_TIP_FIT or re_ <= 0:
+        d["tip_form"], d["tip_diameter"] = "flat", tip
+        if re_ > 0 and abs(re_ - tip / 2) <= 0.1 * tip / 2:
+            warnings.append(f"tapered ball written as Fusion draws it: a {re_:g} mm corner radius on a flat tip, "
+                            f"with {2 * flat:.3g} mm left flat (a true {re_:g} mm ball would have a thinner flank)")
+    else:
+        d["tip_form"] = "ball"
+        if flat < -BALL_TIP_FIT:
+            warnings.append(f"corner radius {re_:g} mm is too large for a {tip:g} mm tip: written as a ball, "
+                            f"with a cone {-2 * flat:.3g} mm wider than Fusion's")
+    d["diameter"] = 2 * (max(tip / 2, cone) + d["flute_len"] * math.tan(half))
+    if d["diameter"] > d["shank_d"] + 0.02:
+        warnings.append(f"the cone is {d['diameter']:.4g} mm wide at the top of its {d['flute_len']:g} mm flutes, "
+                        f"over its {d['shank_d']:g} mm shank: check the flute length in Fusion")
 
 
 def _corner_chamfer(d: dict, g: dict, length, warnings: list[str]) -> None:
@@ -822,6 +914,8 @@ def _version_for(d: dict) -> int:
     v = VERSION
     if d.get("thread_hand") == "left":
         v = max(v, LEFT_HAND_VERSION)
+    if d.get("tip_form"):
+        v = max(v, TIP_FORM_VERSION)
     for row in d.get("cutting_data", []):
         if "stepdown" in row or "stepover" in row or (
             row["material"] == "unknown" and (row["rpm"], row["feed"]) != (d["rpm"], d["feed"])
