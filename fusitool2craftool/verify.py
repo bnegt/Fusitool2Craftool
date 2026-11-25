@@ -95,11 +95,14 @@ def compare(d: dict, entry: dict, options=None) -> list[str]:
                 top = (f("DC") - max(necks)) / 2 / math.tan(math.radians(ta))  # flank meets the neck
                 if flute > top:
                     flute, flute_key = top, "LCF capped where the flank meets the neck"
-    elif f("SFDM"):
+    elif f("SFDM") and not (ftype == "thread mill" and flute is None):
         check("shank_d", f("SFDM"), "SFDM")
     check("flute_len", flute, flute_key)
     body = f("LB") or f("OAL")
-    if body is not None and flute is not None:
+    single = ftype == "thread mill" and flute is None and g.get("NT") == 1
+    if single:
+        out.extend(_single_form_problems(d, g, f, check, body))
+    elif body is not None and flute is not None:
         check("shank_len", max(body - flute, 0.0), f"LB - {flute_key}")
 
     nof = g.get("NOF")
@@ -119,6 +122,15 @@ def compare(d: dict, entry: dict, options=None) -> list[str]:
         allowed = {"end_mill"}  # CamCraft drills need a point (#17)
         if d.get("tip_angle") or d.get("corner_r"):
             out.append("a flat bottom drill must be a flat end mill (tip angle and corner radius 0)")
+    if ftype == "corner chamfer end mill":
+        # an inscribed corner radius, or a sharp corner without chamfer numbers (#18)
+        w, a = f("chamfer-width"), g.get("chamfer-angle")
+        usable = w is not None and w > 0 and _is_num(a) and 0 < a < 90
+        allowed = {"bull_nose"} if usable else {"end_mill"}
+        legs = (w * math.tan(math.radians(a)), w / math.tan(math.radians(a))) if usable else (0.0,)
+        check("corner_r", min(legs), "chamfer (shorter leg)")
+    if single:
+        allowed = {"thread_mill_single"}
     if d.get("kind") not in allowed:
         out.append(f"kind is {d.get('kind')!r}, Fusion type '{ftype}' gives {base_kind!r}")
 
@@ -152,6 +164,36 @@ def compare(d: dict, entry: dict, options=None) -> list[str]:
             out.append(f"cutting data for {r['material']}: rpm {r.get('rpm')} / feed {r.get('feed')} "
                        f"match no Fusion preset")
     return out
+
+
+def _single_neck(g: dict, f, body) -> tuple[float, float] | None:
+    """(reach, neck diameter) of a single-form thread mill, or None without a neck (#16)."""
+    tooth = f("TPX") or f("TP")
+    reach, shank = f("shoulder-length"), f("SFDM") or f("DC")
+    if not (tooth and body and reach and shank and f("DC")) or not tooth < reach < body:
+        return None
+    # no stated neck: the root of an internal thread at the coarsest pitch (5/8 H)
+    neck = f("shoulder-diameter") or f("DC") - 2 * 0.5413 * tooth
+    return (reach, neck) if 0 < neck < shank else None
+
+
+def _single_form_problems(d: dict, g: dict, f, check, body) -> list[str]:
+    """Tooth, pitch range and neck of a single-form thread mill (#16)."""
+    tooth = f("TPX") or f("TP")
+    check("flute_len", tooth, "TPX (one pitch)")
+    check("pitch", tooth, "TPX")
+    check("pitch_min", f("TPN") or tooth, "TPN")
+    angle = g.get("thread-profile-angle")
+    check("tip_angle", float(angle) if _is_num(angle) and angle else 60.0, "thread-profile-angle")
+    neck = _single_neck(g, f, body)
+    if neck:
+        check("shank_d", neck[1], "shoulder-diameter (or the tooth root)")
+        check("shank_len", neck[0] - tooth, "shoulder-length - TPX")
+    else:
+        check("shank_d", f("SFDM"), "SFDM")
+        if body is not None and tooth is not None:
+            check("shank_len", max(body - tooth, 0.0), "LB - TPX")
+    return []
 
 
 def _matching_preset(entry: dict, d: dict, options=None) -> dict | None:
@@ -242,6 +284,32 @@ def _holder_segments(entry: dict) -> list[tuple[float, float, float]] | None:
     return out
 
 
+def _with_shank(segs, entry: dict, options):
+    """The holder segments with a single-form thread mill's shank under them.
+
+    Its CamCraft shank is the neck, so the real shank is part of the body
+    (#16), also when the holder itself is the default one.
+    """
+    g = entry.get("geometry") or {}
+    unit = INCH if str(entry.get("unit", "")).lower() in ("inches", "inch", "in") else 1.0
+
+    def f(key):
+        return float(g[key]) * unit if _is_num(g.get(key)) else None
+
+    if str(entry.get("type", "")).lower() != "thread mill" or f("LCF") or g.get("NT") != 1:
+        return segs
+    body = f("LB") or f("OAL")
+    neck = _single_neck(g, f, body)
+    if not neck:
+        return segs
+    if not segs:
+        if options is None:
+            return segs
+        segs = [(options.holder_len, options.holder_d / 2, options.holder_d / 2)]
+    r = (f("SFDM") or f("DC")) / 2
+    return [(body - neck[0], r, r)] + segs
+
+
 def _holder_problems(d: dict, entry: dict, options=None) -> list[str]:
     """The holder cylinder and drawn body (#12) against Fusion's segments.
 
@@ -253,6 +321,7 @@ def _holder_problems(d: dict, entry: dict, options=None) -> list[str]:
     """
     out: list[str] = []
     segs = _holder_segments(entry)
+    segs = _with_shank(segs, entry, options)
     if segs and max(max(lo, up) for _, lo, up in segs) > 0 and sum(h for h, _, _ in segs) > 0:
         for field, want in (("holder_d", 2 * max(max(lo, up) for _, lo, up in segs)),
                             ("holder_len", sum(h for h, _, _ in segs))):

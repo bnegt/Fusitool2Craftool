@@ -26,6 +26,7 @@ Last checked 2026-11-23: 21 libraries, 6,125 tools; 20 libraries convert,
 | `timm052/` | [timm052/cnc-tool-converter](https://github.com/timm052/cnc-tool-converter) | Example file with many tool types (circle segment, counterbore, taps) |
 | `ouplan/` | [X3msnake/Ouplan-CNC-Fusion-360-Post-Processor](https://github.com/X3msnake/Ouplan-CNC-Fusion-360-Post-Processor) | Small router library, format v1 |
 | `hackland/` | [hackland-shared/CNC](https://github.com/hackland-shared/CNC) | Hackerspace library, format v1, laser |
+| `openspindle/` | [openspindle/openspindle](https://github.com/openspindle/openspindle/tree/main/public/tool-libraries) | Dreanique catalog: 23 single-form thread mills (no `LCF`), no presets (needs `--default-*`) |
 | `orenbee/` | [OrenBee/FiveBarRobot](https://github.com/OrenBee/FiveBarRobot) | Tormach library with drills, reamers, slitting saw |
 
 Not downloadable as a file, but worth having:
@@ -72,6 +73,7 @@ get timm052/cnc-tool-converter "Example Files/Tool Libs/Fusion 360/Fusion Tool L
 get X3msnake/Ouplan-CNC-Fusion-360-Post-Processor tools/MAD.json ouplan
 get hackland-shared/CNC "cad_cam_post_processors/fusion360/fusion360 tools.json" hackland
 get OrenBee/FiveBarRobot "CAM_Profiles/RPF Tormach Tool Library_new.json" orenbee
+get openspindle/openspindle public/tool-libraries/dreanique.json openspindle
 ```
 
 Then:

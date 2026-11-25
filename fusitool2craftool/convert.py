@@ -17,7 +17,11 @@ NOF       number of flutes
 SIG       point angle, included (drills, countersinks)
 TA        taper angle, half angle (chamfer mills); off the axis (dovetails)
 TP        thread pitch (taps, thread mills)
-shoulder-diameter   neck diameter (undercut cutters)
+TPN, TPX  finest / coarsest pitch (single-form thread mills)
+NT        rows of teeth (thread mills)
+shoulder-diameter   neck diameter (undercut cutters, single-form thread mills)
+shoulder-length     reach from the tip to the shank (single-form thread mills)
+chamfer-width, chamfer-angle   corner chamfer end mills
 ========  =============================================
 
 A tool CamCraft would refuse is skipped here with the reason, instead of
@@ -104,6 +108,7 @@ KINDS = {
     "face mill": "end_mill",
     "ball end mill": "ball_nose",
     "bull nose end mill": "bull_nose",
+    "corner chamfer end mill": "bull_nose",  # inscribed corner radius (#18)
     "chamfer mill": "taper",
     "counter sink": "taper",
     "drill": "drill",
@@ -123,6 +128,11 @@ KINDS = {
 UNDERCUT = ("t_slot", "keyseat", "lollipop", "dovetail")
 
 DEFAULT_DRILL_ANGLE = 118.0
+
+# thread_mill.rs: radial depth of an internal / external 60 degree thread
+# per mm of pitch.
+INTERNAL_DEPTH_PER_PITCH = 0.5413
+EXTERNAL_DEPTH_PER_PITCH = 0.61343
 
 
 def is_flat_bottom(angle: float | None) -> bool:
@@ -271,6 +281,13 @@ def convert_tool(entry: dict, options: Options, presets_report: Counter | None =
     if dc is None or dc <= 0:
         raise ToolRefused("no cutting diameter (DC)")
     lcf = length("LCF")
+    if kind == "thread_mill" and not lcf and _num(g.get("NT")) == 1:
+        # One row of teeth, stored without a flute length (#16): the V's own
+        # axial size is one pitch, the coarsest it cuts.
+        kind = "thread_mill_single"
+        lcf = length("TPX") or length("TP")
+        if not lcf or lcf <= 0:
+            raise ToolRefused("single-form thread mill has no pitch (TPX/TP)")
     if lcf is None or lcf <= 0:
         raise ToolRefused("no flute length (LCF)")
     shank_d = length("SFDM") or dc
@@ -324,6 +341,9 @@ def convert_tool(entry: dict, options: Options, presets_report: Counter | None =
     elif kind == "bull_nose":
         d["corner_r"] = re_
 
+    if ftype == "corner chamfer end mill":
+        _corner_chamfer(d, g, length, warnings)
+
     if kind in UNDERCUT:
         _undercut(d, entry, length, body, warnings)
 
@@ -365,8 +385,22 @@ def convert_tool(entry: dict, options: Options, presets_report: Counter | None =
             raise ToolRefused("thread mill has no pitch (TP)")
         d["pitch"] = pitch
         d["tip_angle"] = angle
+    elif kind == "thread_mill_single":
+        d["pitch"] = lcf
+        d["pitch_min"] = length("TPN") or lcf
+        d["tip_angle"] = _num(g.get("thread-profile-angle")) or 60.0
 
     d["holder_d"], d["holder_len"] = _holder(entry, options, warnings)
+    below: tuple[float, float] | None = None  # the shank under the holder, as (length, diameter)
+    default_holder: tuple[float, float] | None = None
+    if kind == "thread_mill_single":
+        below = _single_form_neck(d, length, body, warnings)
+        if below:
+            # CamCraft stacks one shank cylinder and the holder: the shank is
+            # the neck, so the real shank joins the holder above it.
+            default_holder = (d["holder_len"], d["holder_d"])
+            d["holder_len"] += below[0]
+            d["holder_d"] = max(d["holder_d"], below[1])
 
     nof = _num(g.get("NOF"))
     # teeth for --default-fz: Fusion's own count, also past CamCraft's 32-flute
@@ -415,7 +449,7 @@ def convert_tool(entry: dict, options: Options, presets_report: Counter | None =
     if why:
         raise ToolRefused(why)
     if options.holder_bodies:
-        body = holder_body(entry, d["flute_len"] + d["shank_len"], warnings)
+        body = holder_body(entry, d["flute_len"] + d["shank_len"], warnings, below, default_holder)
         if body:
             d["body"] = body
     return d, warnings
@@ -451,16 +485,18 @@ def why_not_sane(d: dict) -> str | None:
         return "a tap's thread pitch must be over 0"
     if kind == "taper" and a <= 0:
         return "a chamfer mill's cone angle must be over 0"
-    if kind == "thread_mill":
+    if kind in ("thread_mill", "thread_mill_single"):
         if not 0 < a < 180:
             return f"a thread mill's form angle {a} degrees must be over 0 and under 180"
         if p <= 0:
             return "a thread mill's pitch must be over 0"
         # thread_mill::EXTERNAL_DEPTH_PER_PITCH (ISO external depth 0.61343 P)
-        if dia / 2 <= 0.61343 * p:
+        if dia / 2 <= EXTERNAL_DEPTH_PER_PITCH * p:
             return f"a thread mill of {dia} mm diameter leaves no core under a {p} mm pitch"
-        if d["flute_len"] < p:
+        if kind == "thread_mill" and d["flute_len"] < p:
             return "a thread mill's cutting length is shorter than one pitch"
+        if kind == "thread_mill_single" and not 0 < d["pitch_min"] <= p:
+            return f"a single-form thread mill's finest pitch {d['pitch_min']} mm must be over 0 and at most its {p} mm coarsest pitch"
     if kind in UNDERCUT:
         why = _undercut_refusal(d)
         if why:
@@ -504,6 +540,60 @@ def _undercut_refusal(d: dict) -> str | None:
 
 
 # --- helpers ---------------------------------------------------------------
+
+
+def _corner_chamfer(d: dict, g: dict, length, warnings: list[str]) -> None:
+    """A corner chamfer end mill as a bull nose (#18).
+
+    CamCraft has no chamfered corner. The arc of a corner radius no larger
+    than either leg of the chamfer lies outside the chamfer face, so the
+    written cutter is never smaller than the real one (rest material is
+    understated, nothing gouges) and closer to it than a sharp corner.
+
+    Fusion's ``chamfer-width`` is radial. Whether ``chamfer-angle`` is off
+    the axis or off the bottom face is not confirmed by a real tool yet, so
+    the axial leg takes the smaller of both readings.
+    """
+    dc, dcx = length("DC"), length("DCX")
+    if dcx and dcx > dc * (1 + 1e-6):
+        raise ToolRefused(f"corner chamfer end mill cuts wider (DCX {dcx:g} mm) than its DC {dc:g} mm")
+    width, angle = length("chamfer-width"), _num(g.get("chamfer-angle"))
+    if not width or width <= 0 or not angle or not 0 < angle < 90:
+        d["kind"], d["corner_r"] = "end_mill", 0.0
+        warnings.append("corner chamfer without a usable chamfer-width/chamfer-angle imported as a sharp end mill")
+        return
+    if width >= dc / 2:
+        raise ToolRefused(f"chamfer width {width:g} mm reaches the axis of the {dc:g} mm cutter (a pointed chamfer mill)")
+    tan = math.tan(math.radians(angle))
+    d["kind"], d["corner_r"] = "bull_nose", width * min(tan, 1 / tan)
+    warnings.append(f"corner chamfer {width:g} mm x {angle:g} degrees imported as a bull nose with corner radius "
+                    f"{d['corner_r']:.4g} mm, never smaller than the real cutter: rest material is understated")
+
+
+def _single_form_neck(d: dict, length, body: float | None, warnings: list[str]) -> tuple[float, float] | None:
+    """Narrow ``d``'s shank to the neck of a single-form thread mill (#16).
+
+    The neck runs from the tooth to Fusion's ``shoulder-length`` (from the
+    tip). Returns the shank above it as (length, diameter), or None when the
+    tool has no reach below its shank: the shank then starts at the tooth.
+
+    Without a ``shoulder-diameter`` the neck is the tooth root at the
+    coarsest pitch. It can't be wider: the tool could not cut that thread
+    over its reach.
+    """
+    shank_d, reach = d["shank_d"], length("shoulder-length")
+    if body is None or not reach or not d["flute_len"] < reach < body:
+        return None
+    neck = length("shoulder-diameter")
+    stated = bool(neck and neck > 0)
+    if not stated:
+        neck = d["diameter"] - 2 * INTERNAL_DEPTH_PER_PITCH * d["pitch"]
+    if not 0 < neck < shank_d:
+        return None
+    if not stated:
+        warnings.append(f"no neck diameter (shoulder-diameter): {neck:.4g} mm, the tooth root at the coarsest pitch")
+    d["shank_d"], d["shank_len"] = neck, reach - d["flute_len"]
+    return body - reach, shank_d
 
 
 def _undercut(d: dict, entry: dict, length, body: float | None, warnings: list[str]) -> None:
@@ -631,7 +721,8 @@ SPUN_MAX_RADIUS = 500.0      # MAX_BODY_RADIUS
 SPUN_SOURCE = "drawn profile"
 
 
-def holder_outline(entry: dict, base: float) -> tuple[list[list[float]] | None, str]:
+def holder_outline(entry: dict, base: float, below: tuple[float, float] | None = None,
+                   default: tuple[float, float] | None = None) -> tuple[list[list[float]] | None, str]:
     """A Fusion holder's segments as CamCraft ``spun`` points ``[z, r, 0]``.
 
     Fusion lists the segments from the tool end up (height, lower and upper
@@ -639,14 +730,20 @@ def holder_outline(entry: dict, base: float) -> tuple[list[list[float]] | None, 
     where CamCraft seats the holder), climbs through every segment and
     closes to the axis at the top: all straight lines, so CamCraft reads it
     exactly. Points closer than 0.02 mm merge keeping the larger radius, so
-    the drawn holder is never thinner than Fusion's. Returns the points, or
-    None and why they cannot be drawn.
+    the drawn holder is never thinner than Fusion's. ``below`` is a shank
+    (length, diameter) drawn under the holder, and ``default`` the holder
+    cylinder above it when Fusion has none, both in mm. Returns the points,
+    or None and why they cannot be drawn.
     """
     holder = entry.get("holder")
     segs = holder.get("segments") if isinstance(holder, dict) else None
+    scale = _unit_scale(holder.get("unit") or entry.get("unit")) if segs else 1.0
+    if not segs and default:
+        segs = [_cylinder(*default)]
     if not segs:
         return None, "no holder segments"
-    scale = _unit_scale(holder.get("unit") or entry.get("unit"))
+    if below:
+        segs = [_cylinder(below[0] / scale, below[1] / scale)] + list(segs)
     z = base
     raw = [(z, 0.0)]
     for i, seg in enumerate(segs, 1):
@@ -683,12 +780,17 @@ def holder_outline(entry: dict, base: float) -> tuple[list[list[float]] | None, 
     return [[round(pz, 6), round(pr, 6), 0.0] for pz, pr in points], ""
 
 
+def _cylinder(height: float, diameter: float) -> dict:
+    return {"height": height, "lower-diameter": diameter, "upper-diameter": diameter}
+
+
 def _collinear(a, b, c) -> bool:
     return abs((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])) < 1e-9 and \
         (b[0] - a[0]) * (c[0] - b[0]) + (b[1] - a[1]) * (c[1] - b[1]) > 0
 
 
-def holder_body(entry: dict, base: float, warnings: list[str]) -> dict | None:
+def holder_body(entry: dict, base: float, warnings: list[str], below: tuple[float, float] | None = None,
+                default: tuple[float, float] | None = None) -> dict | None:
     """The CamCraft ``body`` for a Fusion holder: a drawn ``spun`` outline.
 
     ``facets`` stays empty: every CamCraft that reads a .camtools body
@@ -697,9 +799,9 @@ def holder_body(entry: dict, base: float, warnings: list[str]) -> dict | None:
     file. A holder that cannot be drawn keeps the cylinder (``holder_d`` x
     ``holder_len``), with a warning.
     """
-    if not (isinstance(entry.get("holder"), dict) and entry["holder"].get("segments")):
+    if not below and not (isinstance(entry.get("holder"), dict) and entry["holder"].get("segments")):
         return None
-    points, why = holder_outline(entry, base)
+    points, why = holder_outline(entry, base, below, default)
     if points is None:
         warnings.append(f"holder kept as a cylinder: {why}")
         return None
@@ -776,7 +878,7 @@ def preset_feed(preset: dict, kind: str, pitch: float, unit: float) -> tuple[flo
 
 
 DEFAULT_FIELDS = ("rpm", "feed", "vc", "fz")
-DEFAULT_KINDS = tuple(sorted(set(KINDS.values()) | {"bull_nose", "keyseat"}))
+DEFAULT_KINDS = tuple(sorted(set(KINDS.values()) | {"bull_nose", "keyseat", "thread_mill_single"}))
 
 
 def _check_defaults(options: Options) -> None:
