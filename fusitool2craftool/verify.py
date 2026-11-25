@@ -459,6 +459,10 @@ def _matching_preset(entry: dict, d: dict, options=None) -> dict | None:
     for p in presets:
         if p.get("n") == 1 and not {p.get("v_f"), p.get("v_f_plunge")} - {None, 0, 1}:
             p = {}  # a vendor's placeholder states no speeds (#35)
+        elif p.get("n") == 5000 and _is_num(p.get("v_f_plunge")) and (
+                abs(3 * p["v_f_plunge"] / p["v_f"] - 1) < 1e-3 and min(abs(p["v_f"] * unit - v) for v in (1000, 1016)) < 0.01
+                if p.get("v_f") else min(abs(p["v_f_plunge"] * unit - v) for v in (1000, 1016)) < 0.01):
+            p = {}  # nor does what Fusion gives any new tool (#45)
         n = p.get("n") if _is_num(p.get("n")) and p.get("n") > 0 else None
         if n is not None:
             if not math.isclose(rpm, n, abs_tol=TOL):

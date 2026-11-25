@@ -1232,6 +1232,36 @@ def is_placeholder(preset: dict) -> bool:
         _num(preset.get(k)) in (None, 0, 1) for k in ("v_f", "v_f_plunge"))
 
 
+HIGH_FEED = 0.05  # of the diameter, per tooth (a drill: per turn)
+
+
+def is_fusion_default(preset: dict, unit: float) -> bool:
+    """The speeds Fusion gives a new tool of any size (#45): no speeds for this one.
+
+    5,000 rpm, 1,000 mm/min (40 in/min) and a third of that to plunge. A drill
+    has no cutting feed, and the full 1,000 mm/min to plunge.
+    """
+    n, feed, plunge = (_num(preset.get(k)) or 0.0 for k in ("n", "v_f", "v_f_plunge"))
+    if n != 5000 or not any(math.isclose((feed or plunge) * unit, v, rel_tol=1e-5) for v in (1000.0, 1016.0)):
+        return False
+    return not feed or math.isclose(plunge, feed / 3, rel_tol=1e-3)
+
+
+def states_speeds(preset: dict, unit: float) -> bool:
+    """Not a vendor's placeholder, and not Fusion's default."""
+    return not is_placeholder(preset) and not is_fusion_default(preset, unit)
+
+
+def _warn_feed(kind: str, rpm: float, feed: float, diameter: float, flutes: int | None, warnings: list[str]) -> None:
+    """Warn about a very high feed in Fusion (#45). It is written all the same."""
+    if kind in ("tap", "thread_mill", "thread_mill_single") or rpm <= 1 or diameter <= 0:
+        return  # fed by the pitch, or not turning at all (a drag engraver)
+    each = feed / rpm if kind == "drill" else feed / rpm / (flutes or 1)
+    if each > HIGH_FEED * diameter * (1 + 1e-6):
+        warnings.append(f"feed {feed:g} mm/min at {rpm:g} rpm is {each:.3g} mm per {'turn' if kind == 'drill' else 'tooth'}, "
+                        f"{100 * each / diameter:.2g} % of the {diameter:g} mm diameter: check it before cutting")
+
+
 def _pick_preset(entry: dict, options: Options) -> dict | None:
     presets = presets_of(entry)
     if not presets:
@@ -1241,7 +1271,8 @@ def _pick_preset(entry: dict, options: Options) -> dict | None:
         for p in presets:
             if str(p.get("name", "")).strip().lower() == want:
                 return p
-    return next((p for p in presets if not is_placeholder(p)), presets[0])
+    unit = _unit_scale(entry.get("unit"))
+    return next((p for p in presets if states_speeds(p, unit)), presets[0])
 
 
 def preset_feed(preset: dict, kind: str, pitch: float, unit: float) -> tuple[float | None, str]:
@@ -1326,10 +1357,10 @@ def _speeds(entry: dict, options: Options, unit: float, warnings: list[str],
             flutes: int | None = None, report: Counter | None = None):
     report = report if report is not None else Counter()
     preset = _pick_preset(entry, options)
-    stated = preset is not None and not is_placeholder(preset)
+    stated = preset is not None and states_speeds(preset, unit)
     rpm = _num(preset.get("n")) if stated else None
     feed, source = preset_feed(preset, kind, pitch, unit) if stated else (None, "")
-    none = "no" if stated or preset is None else "only a placeholder"
+    none = "no" if stated or preset is None else "only a placeholder" if is_placeholder(preset) else "only Fusion's default"
     if source and source != "v_f":
         warnings.append(f"feed {feed:g} mm/min taken from Fusion's {source} (the preset has no v_f)")
     if preset and options.preset and str(preset.get("name", "")).strip().lower() != options.preset.strip().lower():
@@ -1352,6 +1383,8 @@ def _speeds(entry: dict, options: Options, unit: float, warnings: list[str],
                 raise ToolRefused(f"{none} cutting feed in Fusion{why} (give --default-feed or --default-fz)")
             warnings.append(f"{none} cutting feed in Fusion: {feed:.6g} mm/min from {how}")
             report[f"feed from {_how_key(how)}"] += 1
+    elif stated:
+        _warn_feed(kind, rpm, feed, diameter, flutes, warnings)
     return rpm, feed, preset
 
 
@@ -1401,7 +1434,7 @@ def _preset_rows(entry: dict, chosen: dict | None, options: Options, rows: list[
             continue
         rpm = _num(p.get("n"))
         feed, _ = preset_feed(p, kind, pitch, unit)
-        if is_placeholder(p) or not (rpm and rpm > 0 and feed and feed > 0):
+        if not states_speeds(p, unit) or not (rpm and rpm > 0 and feed and feed > 0):
             report[(name, "no speeds")] += 1
             continue
         taken.add(material)
