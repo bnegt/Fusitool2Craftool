@@ -8,9 +8,9 @@ check the result in a headless CamCraft, or import it straight into a running
 CamCraft window. A Fusion script that exports **all** your tool libraries in
 one go is included.
 
-Pure Python 3.10+, no dependencies. For **CamCraft 0.26.0 or newer**; older
-versions may refuse a library. Tested against CamCraft 0.26.0: all
-133,935 tools converted from 65 real libraries import without a change (see
+Pure Python 3.10+, no dependencies. For **CamCraft 0.27.0 or newer**; older
+versions may refuse a library. Tested against CamCraft 0.27.0: all
+135,050 tools converted from 68 real libraries import without a change (see
 [Testing against CamCraft](#testing-against-camcraft)).
 
 ## How to run
@@ -121,10 +121,10 @@ Windows). Without installing anything, the Linux `.tar.gz` holds
 `camcraft-cli` and `camcraft-ui` ready to run:
 
 ```sh
-curl -LO https://github.com/NeoTech/Camcraft/releases/download/v0.26.0/camcraft-0.26.0-linux-x86_64.tar.gz
-tar xzf camcraft-0.26.0-linux-x86_64.tar.gz
+curl -LO https://github.com/NeoTech/Camcraft/releases/download/v0.27.0/camcraft-0.27.0-linux-x86_64.tar.gz
+tar xzf camcraft-0.27.0-linux-x86_64.tar.gz
 python3 -m fusitool2craftool MyTools.tools --check \
-    --camcraft-cli ./camcraft-0.26.0-linux-x86_64/camcraft-cli
+    --camcraft-cli ./camcraft-0.27.0-linux-x86_64/camcraft-cli
 ```
 
 ### Optional: install as a command
@@ -163,15 +163,14 @@ an error - don't import that file.
 
 ### Skipped tools (shown in red)
 
-**Tapered ball mills and roundover bits are not imported.** CamCraft has no
-tool type that can represent them, so they are left out of the `.camtools`
-file. When the Fusion library contains any, each one is listed in red and a
-red summary line is printed:
+**Roundover bits are not imported.** CamCraft has no tool type that can
+represent them, so they are left out of the `.camtools` file. When the Fusion
+library contains any, each one is listed in red and a red summary line is
+printed:
 
 ```
-skipped [tapered ball mill]: TB-2F-D6.0-R0.5-20°-E2 ...: tapered mill: its tip form needs a CamCraft newer than 0.26.0 (--unreleased-tapers)
 skipped [roundover bit]: RBB-2F-D1/4-R1/4-F1b ...: corner radius 6.35 mm exceeds half the 6.35 mm diameter (form/roundover cutter)
-NOT IMPORTED: 2 roundover bits, 4 tapered ball mills - CamCraft has no tool type for them, so they are skipped
+NOT IMPORTED: 2 roundover bits - CamCraft has no tool type for them, so they are skipped
 ```
 
 Other tools that cannot be converted ([Not converted](#not-converted)) are
@@ -207,7 +206,6 @@ This runs `camcraft-cli mcp --connect 127.0.0.1:7777` and calls CamCraft's
 | `--preset NAME` | Fusion preset to take rpm/feed from (default: each tool's first) |
 | `--material WORD` | CamCraft material the chosen preset is for: `aluminium_6061`, `mild_steel`, `stainless_304`, `grey_cast_iron`, `brass`, `plastics_pom`, `softwood`, `hardwood`, `mdf`, `plywood`, `acrylic`, `hdpe` |
 | `--all-presets` | also write one cutting data row per Fusion preset whose name names a CamCraft material (see [Cutting data per material](#cutting-data-per-material)) |
-| `--unreleased-tapers` | write tapered mills with their flat or ball tip, for a CamCraft build newer than 0.26.0 (0.26.0 refuses the whole file; see [Tapered mills](#tapered-mills)) |
 | `--unreleased-materials` | allow material words that are only on CamCraft's main, which its latest release refuses (none at the moment) |
 | `--holder-d MM`, `--holder-len MM` | holder size for tools with no holder in Fusion (default 50 x 40) |
 | `--default-holder NAME` | a stand-alone Fusion holder (its description or product id) for tools with no holder in Fusion, drawn at each tool's own stick-out; beats `--holder-d` / `--holder-len` |
@@ -455,13 +453,14 @@ values, not cutting data.
 
 ### Tapered mills
 
-CamCraft 0.26.0 has no tapered cutter. Its `main` has one: a `taper` with a flat
-or ball tip, in `.camtools` version 6
-([NeoTech/Camcraft#3368](https://github.com/NeoTech/Camcraft/issues/3368)).
-`--unreleased-tapers` writes tapered mills for such a build
-([#10](https://github.com/bnegt/Fusitool2Craftool/issues/10)). It is off by
-default, because **0.26.0 refuses the whole file**, and a newer build imports
-the tools but **no operation cuts with a flat or ball tip yet**.
+Since CamCraft 0.27.0 a `taper` can have a flat or ball tip, in `.camtools`
+version 6 ([NeoTech/Camcraft#3368](https://github.com/NeoTech/Camcraft/issues/3368)).
+Tapered mills are written that way
+([#10](https://github.com/bnegt/Fusitool2Craftool/issues/10)), with a warning:
+CamCraft imports them and draws the real cutter, but **no 0.27.0 operation
+cuts with a flat or ball tip yet** (it does not offer them). CamCraft 0.26.0
+and older refuse a file with one. `--unreleased-tapers`, which wrote them
+before 0.27.0, is still accepted and does nothing.
 
 | CamCraft | from Fusion |
 |---|---|
@@ -483,16 +482,17 @@ the tools but **no operation cuts with a flat or ball tip yet**.
 - A cone wider than the shank at the top of the flutes gets a warning: it is
   written as Fusion has it, and the flute length may be wrong.
 - `--default-vc` is computed at the widest diameter, not at the tip.
-- A tapered mill with `TA` 0 is a straight cutter and needs no flag: `end_mill`,
+- A tapered mill with `TA` 0 is a straight cutter: `end_mill`,
   `bull_nose` or `ball_nose`, unless its name says taper (then it is skipped).
 - Chamfer mills and V-bits with a flat tip stay sharp, with their warning:
-  with a flat tip no CamCraft operation would take them.
+  with a flat tip no CamCraft 0.27.0 operation would take them, and as a sharp
+  cone the 2D Chamfer and engraving do
+  ([NeoTech/Camcraft#895](https://github.com/NeoTech/Camcraft/issues/895)).
 
 ### Not converted
 
 | Fusion tool | Why |
 |---|---|
-| tapered ball mill / tapered mill | CamCraft 0.26.0 has no tapered cutter; with `--unreleased-tapers` they are written for a newer build ([Tapered mills](#tapered-mills)) |
 | roundover bit (ball end mill with radius > D/2) | CamCraft has no form/roundover cutter |
 | reamer, counterbore | CamCraft has no kind for them ([NeoTech/Camcraft#897](https://github.com/NeoTech/Camcraft/issues/897)) |
 | form mill | CamCraft has no custom-profile mill (its `Form` kind is a lathe form gauge). Thread mills stored as form mills convert; left-hand and tapered (NPT) ones, and outlines that run back on themselves, do not ([#37](https://github.com/bnegt/Fusitool2Craftool/issues/37)) |
@@ -527,7 +527,7 @@ python3 -m unittest discover -s tests -t .
 Put your own Fusion libraries in `private/` (git-ignored), for example a whole
 ExportAllToolLibraries export; subfolders are searched. The tests then also
 check that every library converts and verifies, and that any skipped tool
-belongs to a named unsupported family (tapered, roundover, reamer, ...). That
+belongs to a named unsupported family (roundover, reamer, ...). That
 last check leaves out `private/test-libraries/`, the place for other people's
 libraries.
 
@@ -550,14 +550,14 @@ renamed or skipped. It runs when
 otherwise:
 
 ```sh
-CAMCRAFT_CLI=~/camcraft-0.26.0-linux-x86_64/camcraft-cli \
+CAMCRAFT_CLI=~/camcraft-0.27.0-linux-x86_64/camcraft-cli \
     python3 -m unittest discover -s tests -t .
 ```
 
-Last run (CamCraft 0.26.0, 2026-11-25): 65 libraries, 133,935 tools written
-with default speeds (18,005 without), all imported, none renamed or skipped,
-with and without `--all-presets` (37,278 material rows). 40 of the libraries
-and 126,248 of the tools are Autodesk's vendor libraries; with them the whole
+Last run (CamCraft 0.27.0, 2026-11-26): 68 libraries, 135,050 tools written
+with default speeds (18,190 without), all imported, none renamed or skipped,
+with and without `--all-presets` (37,516 material rows). 40 of the libraries
+and 127,172 of the tools are Autodesk's vendor libraries; with them the whole
 suite takes about 2.5 minutes (1 minute without CamCraft).
 
 Converted lathe tools turn, bore, groove and thread a part in CamCraft, and
@@ -576,11 +576,10 @@ CamCraft can now handle the tools we skip
 ([#1](https://github.com/bnegt/Fusitool2Craftool/issues/1)):
 
 - CamCraft issues [#895](https://github.com/NeoTech/Camcraft/issues/895)
-  (tapered ball mills, V-bit tip diameter),
+  (V-bit tip diameter),
   [#896](https://github.com/NeoTech/Camcraft/issues/896) (roundover bits),
   [#897](https://github.com/NeoTech/Camcraft/issues/897) (reamers,
-  counterbores), [#3368](https://github.com/NeoTech/Camcraft/issues/3368)
-  (tapered mill tip forms; closed, waiting for a release),
+  counterbores),
   [#4004](https://github.com/NeoTech/Camcraft/issues/4004) (dovetails with a
   corner radius) and [#4031](https://github.com/NeoTech/Camcraft/issues/4031)
   (a cutter hand, for left-hand drills and thread mills) are still open

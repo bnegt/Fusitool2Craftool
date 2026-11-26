@@ -11,7 +11,6 @@ Fusion library under private/ (see TEST_LIBRARIES.md).
 """
 
 import contextlib
-import dataclasses
 import json
 import math
 import os
@@ -26,7 +25,7 @@ from fusitool2craftool import camtools
 from fusitool2craftool.cli import library_files
 from fusitool2craftool.convert import Options, convert
 from fusitool2craftool.fusion import load_library
-from fusitool2craftool.push import PROTOCOL_VERSION, PushError, _close, _content_text, _Session, push
+from fusitool2craftool.push import PROTOCOL_VERSION, _close, _content_text, _Session, push
 
 from .test_convert import ARBOR, DEFAULT_SPEEDS, FIXTURES, PRIVATE, corner_chamfer, holder, keyseat, multi_form, saw, shafted, single_form, single_tooth, tapered, tool
 from .test_lathe import TYPES, lathe
@@ -157,22 +156,26 @@ class CamCraftLiveTests(unittest.TestCase):
         self.assert_imports(edge_cases(), options)
 
     def test_tapered_mills(self):
-        # #10: .camtools version 6 is only on CamCraft's main so far
-        options = Options(unreleased_tapers=True)
+        # #10: .camtools version 6, CamCraft 0.27.0
+        options = Options()
         entries = [tapered(), tapered({"RE": 0.3}, description="rounded"), tapered({"RE": 1}, description="ball by name"),
                    tapered({"DC": 0.02749, "RE": 0.015, "TA": 5, "LCF": 0.3, "LB": 0.48686, "OAL": 3, "SFDM": 0.1875},
                            unit="inches", description="ball"), tapered({"TA": 45, "LCF": 3}, description="steep")]
-        try:
-            self.assert_imports(entries, options)
-        except PushError as e:
-            if "version 6 is not supported" in str(e):
-                self.skipTest("this CamCraft reads no flat or ball taper tips yet (.camtools version 6)")
-            raise
+        self.assert_imports(entries, options)
+        # CamCraft keeps the tip as written: its own export gives it back
+        result = convert(entries, options)
+        keys = ("kind", "tip_form", "tip_diameter", "corner_r", "tip_angle", "diameter", "flute_len")
+        with tempfile.TemporaryDirectory() as tmp, camcraft() as call:
+            call("import_tool_library", path=str(camtools.write(result, Path(tmp) / "tapers.camtools")))
+            call("export_tool_library", path=str(Path(tmp) / "back.camtools"))
+            back = {t["name"]: t["definition"] for t in json.loads((Path(tmp) / "back.camtools").read_text())["tools"]}
+        for t in result.tools:
+            self.assertEqual([back[t["name"]].get(k) for k in keys], [t["definition"].get(k) for k in keys])
         for src in library_files(PRIVATE) if PRIVATE.is_dir() else []:
             mills = [e for e in load_library(src) if e.get("type") == "tapered mill"]
             if mills:
                 with self.subTest(library=src.name):
-                    self.assert_imports(mills, dataclasses.replace(DEFAULT_SPEEDS, unreleased_tapers=True))
+                    self.assert_imports(mills, DEFAULT_SPEEDS)
 
     def test_duplicate_fusion_numbers_are_fine(self):
         # .camtools numbers are not imported (CamCraft numbers the tools

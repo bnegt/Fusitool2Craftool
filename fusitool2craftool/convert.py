@@ -100,7 +100,7 @@ MAX_NOTES = 500
 VERSION = 1
 LEFT_HAND_VERSION = 2
 CUTTING_STEPS_VERSION = 3
-TIP_FORM_VERSION = 6  # flat and ball taper tips; on CamCraft's main only (#10)
+TIP_FORM_VERSION = 6  # flat and ball taper tips, CamCraft >= 0.27.0 (#10)
 
 # Fusion tool type -> CamCraft kind. Types not listed are skipped by name.
 KINDS = {
@@ -179,8 +179,6 @@ class Options:
     """Also write one cutting data row per preset whose name names a material."""
     unreleased_materials: bool = False
     """Allow the material words CamCraft has after its latest release."""
-    unreleased_tapers: bool = False
-    """Write tapered mills (#10). CamCraft's latest release refuses the file."""
 
     def materials(self) -> tuple[str, ...]:
         return MATERIALS if self.unreleased_materials else RELEASED_MATERIALS
@@ -320,7 +318,7 @@ def convert_tool(entry: dict, options: Options, presets_report: Counter | None =
     ftype = str(entry.get("type", "")).strip().lower()
     kind = KINDS.get(ftype)
     if ftype == "tapered mill":
-        kind, ftype = _tapered_type(entry, options)
+        kind, ftype = _tapered_type(entry)
     elif ftype == "form mill":
         from . import threadform
         kind = "thread_mill" if threadform.is_named(entry) else None
@@ -705,7 +703,7 @@ def _warn_flat_tip(length, warnings: list[str]) -> None:
                         f"wider than CamCraft's cone, check depths and clearances")
 
 
-def _tapered_type(entry: dict, options: Options) -> tuple[str, str]:
+def _tapered_type(entry: dict) -> tuple[str, str]:
     """(CamCraft kind, Fusion type to read it as) of a tapered mill (#10).
 
     Without a taper angle it is a straight cutter (some core box and bowl
@@ -719,8 +717,6 @@ def _tapered_type(entry: dict, options: Options) -> tuple[str, str]:
         return ("bull_nose", "bull nose end mill") if _num(g.get("RE")) else ("end_mill", "flat end mill")
     if not 0 < ta < 90:
         raise ToolRefused(f"tapered mill's angle (TA) {ta:g} must be over 0 and under 90 degrees")
-    if not options.unreleased_tapers:
-        raise ToolRefused("tapered mill: its tip form needs a CamCraft newer than 0.26.0 (--unreleased-tapers)")
     return "taper", "tapered mill"
 
 

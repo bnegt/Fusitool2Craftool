@@ -6,10 +6,10 @@ download them into `private/test-libraries/` (git-ignored). The tests then
 convert and verify every one of them (`PrivateLibraryTests` in
 `tests/test_convert.py`).
 
-Last checked 2026-11-25 (with default speeds): 64 libraries convert, 133,931
-tools written, all verified and accepted by CamCraft 0.26.0 (with and without
-`--all-presets`): 24 of the sources below with 7,683 tools, and 40 of
-[Autodesk's vendor libraries](#autodesks-vendor-libraries) with 126,248. The
+Last checked 2026-11-26 (with default speeds): 67 libraries convert, 135,039
+tools written, all verified and accepted by CamCraft 0.27.0 (with and without
+`--all-presets`): 27 of the sources below with 7,867 tools, and 40 of
+[Autodesk's vendor libraries](#autodesks-vendor-libraries) with 127,172. The
 others convert to nothing: `OMAX.json` (one waterjet), three holder libraries
 and two probe libraries.
 
@@ -62,17 +62,17 @@ python3 tests/get_autodesk_libraries.py --update       # again, after a vendor's
 ```
 
 The site had no file for 7 of them (it answers "Failed to download file").
-Counts on 2026-11-25; "Convert" is without defaults (a catalog without speeds,
+Counts on 2026-11-26; "Convert" is without defaults (a catalog without speeds,
 or with only placeholder or default speeds, gives none), "With defaults" uses the tests' default speeds:
 
 | Library (catalogue name) | Entries | Convert | With defaults | Mostly |
 |---|---|---|---|---|
-| Harvey Tool/End Mills | 11,937 | 0 | 11,449 | flat end mill, ball end mill, bull nose end mill |
+| Harvey Tool/End Mills | 11,937 | 0 | 11,936 | flat end mill, ball end mill, bull nose end mill |
 | Harvey Tool/Holemaking and Threading | 3,959 | 0 | 2,703 | drill, form mill, spot drill |
-| Harvey Tool/Specialty Profiles | 7,866 | 0 | 5,484 | slot mill, chamfer mill, form mill |
+| Harvey Tool/Specialty Profiles | 7,866 | 0 | 5,867 | slot mill, chamfer mill, form mill |
 | Helical Solutions/End Mills | 6,007 | 0 | 6,007 | bull nose end mill, flat end mill, ball end mill |
 | Helical Solutions/Specialty Profiles | 190 | 0 | 190 | chamfer mill, spot drill |
-| BitsBits/BitsBits Cutting Tools | 62 | 50 | 50 | flat end mill, tapered mill, ball end mill |
+| BitsBits/BitsBits Cutting Tools | 62 | 62 | 62 | flat end mill, tapered mill, ball end mill |
 | IMCO/Solid End Mills Metric | 1,635 | 1,631 | 1,635 | bull nose end mill, flat end mill, ball end mill |
 | IMCO/Solid End Mills Imperial | 3,243 | 3,243 | 3,243 | bull nose end mill, flat end mill, ball end mill |
 | SGS Kyocera/SGS Carbide Tools Metric | 4,906 | 0 | 4,893 | drill, flat end mill, bull nose end mill |
@@ -93,7 +93,7 @@ or with only placeholder or default speeds, gives none), "With defaults" uses th
 | Sandvik Coromant/Solid Hole Making | 4,315 | 0 | 4,085 | tap right hand, drill, reamer |
 | Guhring/Solid Hole Making | 20,121 | 0 | 18,808 | drill, center drill, spot drill |
 | NexGen Tooling/NexGen Tooling | 3,981 | 0 | 3,981 | bull nose end mill, flat end mill, ball end mill |
-| Garr Tool/Garr Tool | 11,092 | 0 | 10,497 | drill, bull nose end mill, flat end mill |
+| Garr Tool/Garr Tool | 11,092 | 0 | 10,527 | drill, bull nose end mill, flat end mill |
 | Valor Holemaking/Valor Holemaking | 2,251 | 0 | 2,117 | drill, form mill, chamfer mill |
 | OSG/End Mills | 259 | 259 | 259 | flat end mill |
 | Dormer Pramet/Dormer Pramet | - | - | - | not available |
@@ -102,7 +102,7 @@ or with only placeholder or default speeds, gives none), "With defaults" uses th
 | Iscar/Iscar Hole Making Metric | 1,156 | 0 | 1,156 | drill |
 | Iscar/Iscar Solid End Mills Imperial | 3,249 | 0 | 3,249 | bull nose end mill, flat end mill, ball end mill |
 | Iscar/Iscar Solid End Mills Metric | 2,564 | 0 | 2,564 | bull nose end mill, flat end mill, ball end mill |
-| Fraiser Tools/Boss Beaver | 123 | 103 | 119 | flat end mill, drill, chamfer mill |
+| Fraiser Tools/Boss Beaver | 123 | 107 | 123 | flat end mill, drill, chamfer mill |
 | Fraiser Tools/Carbider Poly | 114 | 114 | 114 | flat end mill, chamfer mill, face mill |
 | XEBEC/XEBEC Deburring tools | 42 | 0 | 42 | lollipop mill |
 | Schunk/Schunk Holders | 642 | 0 | 0 | holder |
@@ -114,17 +114,17 @@ or with only placeholder or default speeds, gives none), "With defaults" uses th
 | Sandvik Coromant/Turning Metric/Turning Metric | 243 | 240 | 240 | turning general, turning boring, turning grooving |
 | Iscar/Turning Imperial/Turning Imperial | 71 | 71 | 71 | turning general, turning boring, turning grooving |
 | Iscar/Turning Metric/Turning Metric | 106 | 106 | 106 | turning general, turning boring, turning grooving |
-| Mitsubishi Materials/Solid End Mills | 3,248 | 3,240 | 3,240 | flat end mill, ball end mill, bull nose end mill |
+| Mitsubishi Materials/Solid End Mills | 3,248 | 3,248 | 3,248 | flat end mill, ball end mill, bull nose end mill |
 | Ingersoll/Turning Imperial/Turning Imperial | - | - | - | not available |
 | Ingersoll/Turning Metric/Turning Metric | - | - | - | not available |
 | Widia/Turning Imperial/Turning Imperial | - | - | - | not available |
 | Widia/Turning Metric/Turning Metric | - | - | - | not available |
-| **Total** | **134,498** | **10,463** | **126,248** | |
+| **Total** | **134,498** | **10,487** | **127,172** | |
 
-The tools skipped even with defaults, by reason: form mill 2,398; tapered mill
-925; reamer 876; counterbore 434; dovetail with a corner radius 372; radius
-mill 270; left-hand cutter 1,313; probe 22; undercut cutter without a neck
-narrower than the head 3; other 17.
+The tools skipped even with defaults, by reason: form mill 2,398; left-hand
+cutter 1,313; reamer 876; counterbore 434; dovetail with a corner radius 372;
+roundover bit 280; probe 22; round grooving tool 5; tapered mill without a
+taper angle 1; other 5.
 
 ## Fusion tool types covered
 
@@ -137,11 +137,11 @@ or is skipped under a family name
 
 | Fusion type | Tools | Libraries | Result |
 |---|---|---|---|
-| ball end mill | 11,958 | 37 | `ball_nose` |
+| ball end mill | 11,978 | 42 | `ball_nose` |
 | boring bar | 1 | 1 | `bore` |
-| bull nose end mill | 49,895 | 27 | `bull_nose` |
+| bull nose end mill | 49,899 | 28 | `bull_nose` |
 | center drill | 373 | 6 | `drill` |
-| chamfer mill | 2,278 | 24 | `taper` |
+| chamfer mill | 2,296 | 29 | `taper` |
 | circle segment barrel | 1 | 1 | skipped: circle segment mill |
 | circle segment lens | 1 | 1 | skipped: circle segment mill |
 | circle segment oval | 1 | 1 | skipped: circle segment mill |
@@ -150,26 +150,26 @@ or is skipped under a family name
 | counter bore | 435 | 3 | skipped: counterbore |
 | counter sink | 108 | 7 | `taper` |
 | dovetail mill | 633 | 5 | `dovetail` |
-| drill | 34,969 | 27 | `drill` (`taper` for a point of 60 degrees or less) |
+| drill | 34,976 | 29 | `drill` (`taper` for a point of 60 degrees or less) |
 | electric arc wire | **none** | - | skipped: additive head |
-| face mill | 168 | 14 | `end_mill` |
-| flat end mill | 25,050 | 45 | `end_mill` |
-| form mill | 3,026 | 7 | skipped: form mill (`thread_mill` or `thread_mill_single` for thread mills) |
-| holder | 1,685 | 13 | counted, see `--holders` |
-| laser cutter | 2 | 2 | skipped: sheet cutting head |
+| face mill | 176 | 19 | `end_mill` |
+| flat end mill | 25,128 | 55 | `end_mill` |
+| form mill | 3,028 | 9 | skipped: form mill (`thread_mill` or `thread_mill_single` for thread mills) |
+| holder | 1,693 | 16 | counted, see `--holders` |
+| laser cutter | 5 | 4 | skipped: sheet cutting head |
 | laser powder | **none** | - | skipped: additive head |
 | laser wire | **none** | - | skipped: additive head |
 | lollipop mill | 1,018 | 5 | `lollipop` |
 | plasma cutter | 1 | 1 | skipped: sheet cutting head |
-| probe | 28 | 7 | skipped: probe |
+| probe | 29 | 8 | skipped: probe |
 | radius mill | 273 | 4 | skipped: roundover bit |
 | reamer | 881 | 9 | skipped: reamer |
 | shaft | **none** | - | skipped: holder part |
-| slot mill | 3,746 | 9 | `t_slot` |
+| slot mill | 3,750 | 11 | `t_slot` |
 | spot drill | 1,249 | 16 | `drill` (`taper` for a point of 60 degrees or less) |
 | tap left hand | 1 | 1 | `tap` |
 | tap right hand | 2,744 | 7 | `tap` |
-| tapered mill | 967 | 11 | skipped: tapered mill (`taper` with `--unreleased-tapers`; straight without an angle) |
+| tapered mill | 977 | 13 | `taper` with a flat or ball tip (straight without an angle) |
 | thread mill | 206 | 5 | `thread_mill` |
 | tool block | **none** | - | skipped: holder part |
 | turning boring | 200 | 8 | `bore` |
