@@ -27,7 +27,8 @@ from fusitool2craftool.convert import Options, convert
 from fusitool2craftool.fusion import load_library
 from fusitool2craftool.push import PROTOCOL_VERSION, _close, _content_text, _Session, push
 
-from .test_convert import ARBOR, DEFAULT_SPEEDS, FIXTURES, PRIVATE, corner_chamfer, holder, keyseat, multi_form, saw, shafted, single_form, single_tooth, tapered, tool
+from .test_convert import (ARBOR, DEFAULT_SPEEDS, FIXTURES, PRIVATE, corner_chamfer, corner_rounding, holder, keyseat,
+                           multi_form, radius_mill, saw, shafted, single_form, single_tooth, tapered, tool)
 from .test_lathe import TYPES, lathe
 
 CLI = os.environ.get("CAMCRAFT_CLI") or shutil.which("camcraft-cli")
@@ -109,6 +110,8 @@ def edge_cases() -> list[dict]:
              holder={"unit": "millimeters", "segments": [
                  {"height": 0.005, "lower-diameter": 20, "upper-diameter": 21},
                  {"height": 20, "lower-diameter": 21, "upper-diameter": 21}]}),
+        corner_rounding(),  # #11: a form mill's drawn outline, and its head above the flutes as the neck
+        radius_mill(),
     ]
 
 
@@ -176,6 +179,30 @@ class CamCraftLiveTests(unittest.TestCase):
             if mills:
                 with self.subTest(library=src.name):
                     self.assert_imports(mills, DEFAULT_SPEEDS)
+
+    def test_form_mills(self):
+        # #11: CamCraft 0.27.0's form mill, from a Fusion profile or a radius mill's numbers
+        entries = [corner_rounding(),
+                   radius_mill(), radius_mill({"DC": 0.028, "RE": 0.375, "tip-length": 0, "LCF": 0.75, "LB": 1.5,
+                                               "SFDM": 0.5, "shoulder-diameter": 0.778, "shoulder-length": 0.875})]
+        result = convert(entries)
+        self.assertEqual(result.skipped, [])
+        self.assert_imports(entries)
+        self.assert_imports(entries, Options(holder_bodies=False))
+        # CamCraft keeps the outline as written: its own export gives it back
+        with tempfile.TemporaryDirectory() as tmp, camcraft() as call:
+            call("import_tool_library", path=str(camtools.write(result, Path(tmp) / "forms.camtools")))
+            call("export_tool_library", path=str(Path(tmp) / "back.camtools"))
+            back = {t["name"]: t["definition"] for t in json.loads((Path(tmp) / "back.camtools").read_text())["tools"]}
+        for t in result.tools:
+            got, sent = back[t["name"]], t["definition"]
+            self.assertEqual((got["kind"], got["form"], got["diameter"], got["flute_len"]),
+                             (sent["kind"], sent["form"], sent["diameter"], sent["flute_len"]))
+        for src in library_files(PRIVATE) if PRIVATE.is_dir() else []:
+            forms = [e for e in load_library(src) if str(e.get("type", "")).lower() in ("form mill", "radius mill")]
+            if forms:
+                with self.subTest(library=src.name):
+                    self.assert_imports(forms, DEFAULT_SPEEDS)
 
     def test_duplicate_fusion_numbers_are_fine(self):
         # .camtools numbers are not imported (CamCraft numbers the tools

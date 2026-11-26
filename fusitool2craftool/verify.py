@@ -82,8 +82,11 @@ def compare(d: dict, entry: dict, options=None) -> list[str]:
         return float(v) * unit if isinstance(v, (int, float)) and not isinstance(v, bool) else None
 
     tapered = ftype == "tapered mill" and bool(g.get("TA"))
+    formed = ftype in ("form mill", "radius mill") and d.get("kind") == "form_mill"  # #11
     if tapered:
         out.extend(_tapered_problems(d, f, float(g["TA"]), check))
+    elif formed:
+        out.extend(_form_mill_problems(d, entry, f, check))
     else:
         check("diameter", f("DC"), "DC")
         if d.get("tip_form") or d.get("tip_diameter"):
@@ -121,7 +124,8 @@ def compare(d: dict, entry: dict, options=None) -> list[str]:
     elif f("SFDM") and ftype != "form mill" and not (ftype == "thread mill" and flute is None):
         check("shank_d", f("SFDM"), "SFDM")
     if ftype == "form mill":
-        out.extend(_form_thread_problems(d, entry, f, check))
+        if not formed:
+            out.extend(_form_thread_problems(d, entry, f, check))
         flute = None
     check("flute_len", flute, flute_key)
     body = body_end or f("LB") or f("OAL")
@@ -165,7 +169,13 @@ def compare(d: dict, entry: dict, options=None) -> list[str]:
     if single:
         allowed = {"thread_mill_single"}
     if ftype == "form mill":
-        allowed = {"thread_mill", "thread_mill_single"}  # a thread mill stored as a form mill (#37, #47)
+        desc = str(entry.get("description", "")).lower()
+        if "thread mill" in desc or "threadmill" in desc:
+            allowed = {"thread_mill", "thread_mill_single"}  # a thread mill stored as a form mill (#37, #47)
+        else:
+            allowed = {"form_mill"}  # #11
+    if ftype == "radius mill":
+        allowed = {"form_mill"}  # #11
     if tapered:
         allowed = {"taper"}
     elif ftype == "tapered mill":  # no taper angle: a straight cutter (#10)
@@ -341,24 +351,37 @@ def _tapered_problems(d: dict, f, ta: float, check) -> list[str]:
     return out
 
 
-def _outline(entry: dict) -> list[tuple[float, float]]:
-    """A form mill's outline from the tip up as (z, r) in mm; arcs as their chords."""
+def _outline(entry: dict, arcs: bool = False) -> list[tuple[float, float]]:
+    """A form mill's outline from the tip up as (z, r) in mm.
+
+    Arcs as their chords, or with ``arcs`` along the arc in steps of at
+    most 1 degree (they sag under 4e-5 of their radius).
+    """
     unit = INCH if str(entry.get("unit", "")).lower() in ("inches", "inch", "in") else 1.0
     line: list[tuple[float, float]] = []
     for seg in (entry.get("geometry") or {}).get("profile") or []:
         r, z = seg["end"]
         if line and z * unit < line[-1][0] - 1e-4:
             break
+        if arcs and line and seg.get("arc"):
+            # Fusion's plane is (r, z), counterclockwise there with "ccw"
+            cr, cz = (v * unit for v in seg["center"])
+            (az, ar), (bz, br) = line[-1], (z * unit, r * unit)
+            t0, t1 = math.atan2(az - cz, ar - cr), math.atan2(bz - cz, br - cr)
+            turn = (t1 - t0) % (2 * math.pi) if seg.get("ccw") else -((t0 - t1) % (2 * math.pi))
+            rad = (math.hypot(az - cz, ar - cr) + math.hypot(bz - cz, br - cr)) / 2
+            n = max(2, math.ceil(abs(math.degrees(turn))))
+            line += [(cz + rad * math.sin(t0 + turn * i / n), cr + rad * math.cos(t0 + turn * i / n)) for i in range(1, n)]
         line.append((z * unit, r * unit))
     return line
 
 
-def _outline_above(entry: dict, start: float) -> list[tuple[float, float, float]]:
+def _outline_above(entry: dict, start: float, arcs: bool = False) -> list[tuple[float, float, float]]:
     """The outline from ``start`` to LB as (height, lower, upper radius)."""
     unit = INCH if str(entry.get("unit", "")).lower() in ("inches", "inch", "in") else 1.0
     body = float((entry.get("geometry") or {}).get("LB") or 0) * unit
     out = []
-    for (z0, r0), (z1, r1) in zip(line := _outline(entry), line[1:]):
+    for (z0, r0), (z1, r1) in zip(line := _outline(entry, arcs), line[1:]):
         a, b = max(z0, start), min(z1, body)
         if b - a > 1e-5:
             out.append((b - a, r0 + (r1 - r0) * (a - z0) / (z1 - z0), r0 + (r1 - r0) * (b - z0) / (z1 - z0)))
@@ -436,6 +459,94 @@ def _form_thread_problems(d: dict, entry: dict, f, check) -> list[str]:
     return out
 
 
+def _form_mill_problems(d: dict, entry: dict, f, check) -> list[str]:
+    """A form or radius mill as CamCraft's drawn outline (#11).
+
+    The written ``[z, r, arc]`` points, arcs drawn by the spun profile's
+    law, must follow Fusion's outline: its ``profile`` along the arcs, or
+    a radius mill's pilot of DC, quarter circle of RE and LCF. Both are
+    drawn in steps of at most 1 degree, and every point of each lies within
+    2 um of the other outline (measured across it, not at one height: where
+    the outline runs nearly flat a sliver of height is a lot of radius).
+    Above the flutes, the neck covers Fusion's outline as far as it reaches.
+    """
+    out: list[str] = []
+    form = d.get("form")
+    pts = form.get("points") if isinstance(form, dict) else None
+    if not (isinstance(pts, list) and len(pts) >= 2 and all(
+            isinstance(q, list) and len(q) == 3 and all(_is_num(v) for v in q) for q in pts)):
+        return ["a form mill without a valid form outline ([z, r, arc] points)"]
+    if set(form) != {"points"}:
+        out.append(f"the form outline states {sorted(set(form) - {'points'})}: Fusion states no pilot or preset")
+    if pts[0][:2] != [0, 0] or any(b[0] < a[0] for a, b in zip(pts, pts[1:])):
+        return out + ["the form outline must start at z 0, r 0 and climb"]
+    check("diameter", 2 * max(q[1] for q in pts), "the outline's widest")
+    check("flute_len", pts[-1][0], "the outline's top")
+    flute, ftype = pts[-1][0], str(entry.get("type", "")).lower()
+
+    written: list[tuple[float, float]] = [(0.0, 0.0)]
+    for a, b in zip(pts, pts[1:]):
+        if a[2]:
+            dz, dr = b[0] - a[0], b[1] - a[1]
+            chord, rad = math.hypot(dz, dr), abs(a[2])
+            back = math.sqrt(max(rad * rad - chord * chord / 4, 0.0))
+            s = 1.0 if a[2] > 0 else -1.0  # the centre is behind the chord of a convex arc
+            cz, cr = a[0] + dz / 2 + s * back * dr / chord, a[1] + dr / 2 - s * back * dz / chord
+            t0, t1 = math.atan2(a[0] - cz, a[1] - cr), math.atan2(b[0] - cz, b[1] - cr)
+            turn = (t1 - t0 + math.pi) % (2 * math.pi) - math.pi  # the minor arc
+            n = max(2, math.ceil(abs(math.degrees(turn))))
+            written += [(cz + rad * math.sin(t0 + turn * i / n), cr + rad * math.cos(t0 + turn * i / n))
+                        for i in range(1, n)]
+        written.append((b[0], b[1]))
+
+    if ftype == "radius mill":
+        dc, re_, tip, lcf = f("DC") or 0.0, f("RE") or 0.0, f("tip-length") or 0.0, f("LCF") or 0.0
+        fusion = [(0.0, 0.0), (0.0, dc / 2), (tip, dc / 2)]
+        fusion += [(tip + re_ * math.sin(math.radians(i)), dc / 2 + re_ - re_ * math.cos(math.radians(i)))
+                   for i in range(1, 91)]
+        fusion.append((lcf, dc / 2 + re_))
+        check("flute_len", lcf, "LCF")
+    else:
+        lcf = f("LCF") or 0.0
+        if abs(flute - lcf) > 1e-3 + TOL:
+            out.append(f"flute_len is {flute}, Fusion LCF gives {round(lcf, 6)}")
+        # up to the written top: a step in there is the neck, one out is the cutter's
+        fusion = []
+        for q in _outline(entry, arcs=True):
+            if fusion and q[0] > flute + 1e-9:
+                (z0, r0) = fusion[-1]
+                fusion.append((flute, r0 + (q[1] - r0) * (flute - z0) / (q[0] - z0)))
+                break
+            if fusion and q[0] >= flute - 1e-9 and q[1] < fusion[-1][1]:
+                break
+            fusion.append(q)
+
+    def gap(p: tuple[float, float], line: list[tuple[float, float]]) -> float:
+        best = math.inf
+        for (z0, r0), (z1, r1) in zip(line, line[1:]):
+            if z0 > p[0] + 0.01 or z1 < p[0] - 0.01:
+                continue
+            dz, dr = z1 - z0, r1 - r0
+            t = 0.0 if dz == dr == 0 else min(max(((p[0] - z0) * dz + (p[1] - r0) * dr) / (dz * dz + dr * dr), 0.0), 1.0)
+            best = min(best, math.hypot(p[0] - z0 - t * dz, p[1] - r0 - t * dr))
+        return best
+
+    for one, other, what in ((written, fusion, "the written outline"), (fusion, written, "Fusion's outline")):
+        far = next((p for p in one if gap(p, other) > 2e-3), None)
+        if far:
+            out.append(f"{what} at z {far[0]:.4f} mm, r {far[1]:.4f} mm is {gap(far, other):.4f} mm off the other one")
+    if ftype == "form mill":
+        z, neck = flute, (d.get("shank_d") or 0.0) / 2
+        for h, lo, up in _outline_above(entry, flute, arcs=True):
+            for t in (0.0, 0.5, 1.0):
+                if z + h * t <= flute + (d.get("shank_len") or 0.0) - 1e-6 and lo + (up - lo) * t > neck + 1e-3:
+                    out.append(f"the neck is {d.get('shank_d')} mm, the outline {round(2 * (lo + (up - lo) * t), 4)} "
+                               f"at {round(z + h * t, 3)}")
+                    break
+            z += h
+    return out
+
+
 def _single_neck(g: dict, f, body) -> tuple[float, float] | None:
     """(reach, neck diameter) of a single-form thread mill, or None without a neck (#16)."""
     tooth = f("TPX") or f("TP")
@@ -485,8 +596,8 @@ def _matching_preset(entry: dict, d: dict, options=None) -> dict | None:
     if not (_is_num(rpm) and _is_num(feed)):
         return None
     dia = g["DC"] * unit if _is_num(g.get("DC")) else 0.0
-    if str(entry.get("type", "")).strip().lower() == "tapered mill" and g.get("TA"):
-        dia = d.get("diameter") or 0.0  # v_c holds at the widest, not at the tip (#10)
+    if str(entry.get("type", "")).strip().lower() == "tapered mill" and g.get("TA") or kind == "form_mill":
+        dia = d.get("diameter") or 0.0  # v_c holds at the widest, not at the tip (#10, #11)
     nof = g.get("NOF")
     flutes = int(nof) if _is_num(nof) and float(nof).is_integer() and nof >= 1 else None  # teeth, uncapped
     presets = presets_of(entry) or ([{}] if options is not None else [])
@@ -733,7 +844,7 @@ def _holder_problems(d: dict, entry: dict, options=None) -> list[str]:
     segs = _with_shank(segs, entry, options)
     if str(entry.get("type", "")).lower() == "form mill":
         top = (d.get("flute_len") or 0) + (d.get("shank_len") or 0)
-        under = _outline_above(entry, top)
+        under = _outline_above(entry, top, arcs=d.get("kind") == "form_mill")
         if under and not segs and options is not None:
             segs = [(options.holder_len, options.holder_d / 2, options.holder_d / 2)]
         segs = under + segs if segs else segs

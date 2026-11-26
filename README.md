@@ -10,7 +10,7 @@ one go is included.
 
 Pure Python 3.10+, no dependencies. For **CamCraft 0.27.0 or newer**; older
 versions may refuse a library. Tested against CamCraft 0.27.0: all
-135,050 tools converted from 68 real libraries import without a change (see
+136,640 tools converted from 68 real libraries import without a change (see
 [Testing against CamCraft](#testing-against-camcraft)).
 
 ## How to run
@@ -163,14 +163,16 @@ an error - don't import that file.
 
 ### Skipped tools (shown in red)
 
-**Roundover bits are not imported.** CamCraft has no tool type that can
-represent them, so they are left out of the `.camtools` file. When the Fusion
-library contains any, each one is listed in red and a red summary line is
-printed:
+**Some cutters are not imported**, such as form mills whose outline narrows
+going up (an undercut, like a double angle or back corner rounding cutter): no
+CamCraft tool type can represent them, so they are left out of the `.camtools`
+file. When the Fusion library contains any, each one is listed in red and a red
+summary line is printed:
 
 ```
+skipped [form mill]: HARVEY - 807316-C3 - DOUBLE ANGLE SHANK CUTTER ...: form mill whose outline narrows going up at 1.587 mm: an undercut form, which CamCraft cannot write yet (NeoTech/Camcraft#896)
 skipped [roundover bit]: RBB-2F-D1/4-R1/4-F1b ...: corner radius 6.35 mm exceeds half the 6.35 mm diameter (form/roundover cutter)
-NOT IMPORTED: 2 roundover bits - CamCraft has no tool type for them, so they are skipped
+NOT IMPORTED: 1 form mill, 1 roundover bit - CamCraft has no tool type for them, so they are skipped
 ```
 
 Other tools that cannot be converted ([Not converted](#not-converted)) are
@@ -441,7 +443,7 @@ give them as defaults.
 | `KIND=value` on any of them | that kind only, e.g. `--default-vc drill=60 --default-feed drill=150`; repeat per kind |
 
 Kinds are CamCraft's: `end_mill`, `ball_nose`, `bull_nose`, `drill`, `tap`,
-`taper`, `thread_mill`, `thread_mill_single`, `bore`, `turning`, `groove`, `thread`, `t_slot`, `keyseat`, `lollipop`, `dovetail`.
+`taper`, `thread_mill`, `thread_mill_single`, `bore`, `turning`, `groove`, `thread`, `t_slot`, `keyseat`, `lollipop`, `dovetail`, `form_mill`.
 Order for a missing value: the kind's own default beats the global one, and
 at each level an explicit rpm/feed beats v_c/f_z. A tap always feeds
 rpm x pitch. A value Fusion does state is never replaced. Every tool that
@@ -489,13 +491,46 @@ before 0.27.0, is still accepted and does nothing.
   cone the 2D Chamfer and engraving do
   ([NeoTech/Camcraft#895](https://github.com/NeoTech/Camcraft/issues/895)).
 
+### Form mills and radius mills
+
+Since CamCraft 0.27.0 a `form_mill` is a cutter whose edge is a drawn outline
+([NeoTech/Camcraft#3369](https://github.com/NeoTech/Camcraft/issues/3369)).
+Fusion form mills (corner rounding end mills, reamers, drills and other
+outlines Harvey and others store as form mills) and radius mills (corner
+rounding end mills and roundover bits stated by numbers) are written as one
+([#11](https://github.com/bnegt/Fusitool2Craftool/issues/11)), with a warning:
+CamCraft imports them and draws the real cutter, but **no 0.27.0 operation cuts
+with a form mill yet** (it does not offer them).
+
+| CamCraft | from Fusion |
+|---|---|
+| `form.points` | the outline from the tip up to `LCF` as `[z, r, arc]`: Fusion's `profile` with its arcs (form mill), or a pilot of `DC` for `tip-length`, a concave quarter circle of `RE` out to `DC + 2 x RE` and up to `LCF` (radius mill) |
+| `diameter`, `flute_len` | the outline's widest point and its top |
+| `shank_d`, `shank_len`, holder body | a form mill: its outline above `LCF`, as the neck and the drawn body, never thinner than Fusion's; a radius mill: its shoulder and shank, as for an end mill |
+
+- CamCraft's outline may not narrow going up. A form mill whose outline does
+  (double angle, back corner rounding, back deburring, plate chamfer, concave
+  radius, drill and thread mill combinations) is skipped as an undercut form
+  ([NeoTech/Camcraft#896](https://github.com/NeoTech/Camcraft/issues/896)).
+- `LCF` is cut at a point of the outline when one is within 1 um of it
+  (Fusion rounds the two separately).
+- A radius mill whose head (`DC + 2 x RE`) is wider than its shoulder, as
+  DATRON's are, is written as Fusion draws it, with a warning.
+- `--default-vc` is computed at the widest diameter: a radius mill's `DC` is
+  its pilot.
+- A form mill without a profile (DATRON's) is skipped. Thread mills stored as
+  form mills are thread mills, as before
+  ([#37](https://github.com/bnegt/Fusitool2Craftool/issues/37)).
+- The output check draws both outlines along their arcs and requires every
+  point of each to lie within 2 um of the other.
+
 ### Not converted
 
 | Fusion tool | Why |
 |---|---|
-| roundover bit (ball end mill with radius > D/2) | CamCraft has no form/roundover cutter |
+| roundover bit (ball, bull nose or flat end mill with a radius over D/2) | its `DC` says nothing of the pilot or the head; a radius mill converts ([Form mills](#form-mills-and-radius-mills)) |
 | reamer, counterbore | CamCraft has no kind for them ([NeoTech/Camcraft#897](https://github.com/NeoTech/Camcraft/issues/897)) |
-| form mill | CamCraft has no custom-profile mill (its `Form` kind is a lathe form gauge). Thread mills stored as form mills convert; left-hand and tapered (NPT) ones, and outlines that run back on themselves, do not ([#37](https://github.com/bnegt/Fusitool2Craftool/issues/37)) |
+| form mill whose outline narrows going up, runs back on itself or is not stated | CamCraft 0.27.0's form mill has no undercut ([NeoTech/Camcraft#896](https://github.com/NeoTech/Camcraft/issues/896)). Left-hand and tapered (NPT) thread mills stored as form mills do not convert either ([#37](https://github.com/bnegt/Fusitool2Craftool/issues/37)) |
 | internal and face grooving, round grooving, internal threading tools | CamCraft's blade and threading insert are outside tools, and its blade is square |
 | threading tools without a pitch (`TP`) or with a form other than 60 degrees | no known V width ([#20](https://github.com/bnegt/Fusitool2Craftool/issues/20)) |
 | dovetail mill with a corner radius | CamCraft's dovetail has a sharp corner. Fusion's `DC` is at the top of the radius, so CamCraft's whole flank would be too thin (up to 1.3 mm in vendor libraries) and it would miss a gouge ([NeoTech/Camcraft#4004](https://github.com/NeoTech/Camcraft/issues/4004)) |
@@ -527,7 +562,7 @@ python3 -m unittest discover -s tests -t .
 Put your own Fusion libraries in `private/` (git-ignored), for example a whole
 ExportAllToolLibraries export; subfolders are searched. The tests then also
 check that every library converts and verifies, and that any skipped tool
-belongs to a named unsupported family (roundover, reamer, ...). That
+belongs to a named unsupported family (form mill, reamer, ...). That
 last check leaves out `private/test-libraries/`, the place for other people's
 libraries.
 
@@ -554,10 +589,10 @@ CAMCRAFT_CLI=~/camcraft-0.27.0-linux-x86_64/camcraft-cli \
     python3 -m unittest discover -s tests -t .
 ```
 
-Last run (CamCraft 0.27.0, 2026-11-26): 68 libraries, 135,050 tools written
-with default speeds (18,190 without), all imported, none renamed or skipped,
-with and without `--all-presets` (37,516 material rows). 40 of the libraries
-and 127,172 of the tools are Autodesk's vendor libraries; with them the whole
+Last run (CamCraft 0.27.0, 2026-11-26): 68 libraries, 136,640 tools written
+with default speeds (18,226 without), all imported, none renamed or skipped,
+with and without `--all-presets` (37,519 material rows). 40 of the libraries
+and 128,759 of the tools are Autodesk's vendor libraries; with them the whole
 suite takes about 2.5 minutes (1 minute without CamCraft).
 
 Converted lathe tools turn, bore, groove and thread a part in CamCraft, and
@@ -577,7 +612,7 @@ CamCraft can now handle the tools we skip
 
 - CamCraft issues [#895](https://github.com/NeoTech/Camcraft/issues/895)
   (V-bit tip diameter),
-  [#896](https://github.com/NeoTech/Camcraft/issues/896) (roundover bits),
+  [#896](https://github.com/NeoTech/Camcraft/issues/896) (undercut form mills),
   [#897](https://github.com/NeoTech/Camcraft/issues/897) (reamers,
   counterbores),
   [#4004](https://github.com/NeoTech/Camcraft/issues/4004) (dovetails with a

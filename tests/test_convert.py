@@ -9,7 +9,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from fusitool2craftool import camtools
+from fusitool2craftool import camtools, formmill
 from fusitool2craftool.cli import main
 from fusitool2craftool.convert import (KINDS, RELEASED_MATERIALS, Options, convert, find_holder, preset_material,
                                        unsupported_category, why_not_sane)
@@ -1063,6 +1063,153 @@ class TaperedMillTests(unittest.TestCase):
         self.assertEqual(result.version, 1)
 
 
+def corner_rounding(profile=None, geometry=None, **extra):
+    """Harvey 45016 as Fusion stores it: a 1/4" corner rounding end mill, 5 degree flare, on a 1" head (#11)."""
+    if profile is None:
+        profile = [{"end": [0, 0]}, {"end": [0.203, 0]}, {"end": [0.205344, 0.0267889]},
+                   {"arc": True, "ccw": False, "center": [0.454392, 0.005], "end": [0.432603, 0.254049]},
+                   {"end": [0.5, 0.259945]}, {"end": [0.5, 1.125]}, {"end": [0.375, 1.125]}, {"end": [0.375, 3.25]},
+                   {"end": [0, 0.375]}]
+    return tool("form mill", unit="inches", description=extra.pop("description", "CORNER ROUNDING END MILL"),
+                geometry={"DC": 1, "LCF": 0.25995, "LB": 1.625, "OAL": 3.25, "SFDM": 0.75, "NOF": 3,
+                          "profile": profile, **(geometry or {})}, **extra)
+
+
+def radius_mill(geometry=None, **extra):
+    """Harvey 44078: a 5/64" corner rounding end mill on a 1/4" pilot, stated by numbers (#11)."""
+    return tool("radius mill", unit="inches", description=extra.pop("description", "CORNER ROUNDING END MILL"),
+                geometry={"DC": 0.25, "RE": 0.078, "tip-length": 0.005, "LCF": 0.083, "LB": 0.333, "OAL": 3,
+                          "SFDM": 0.5, "shoulder-diameter": 0.406, "shoulder-length": 0.083, "NOF": 4,
+                          **(geometry or {})}, **extra)
+
+
+class FormMillTests(unittest.TestCase):
+    """#11: form and radius mills as CamCraft 0.27.0's form mill (a drawn outline)."""
+
+    def verifies(self, result):
+        with tempfile.TemporaryDirectory() as tmp:
+            return verify_file(camtools.write(result, Path(tmp) / "out.camtools"), result)
+
+    def test_profile_with_a_concave_arc(self):
+        d, result = one(corner_rounding())
+        pts = d["form"]["points"]
+        self.assertEqual((d["kind"], list(d["form"])), ("form_mill", ["points"]))
+        self.assertEqual(pts[0], [0.0, 0.0, 0.0])
+        self.assertEqual(pts[1], [0.0, 5.1562, 0.0])  # the 0.406" pilot face
+        self.assertAlmostEqual(pts[2][2], -6.35, places=4)  # the 1/4" radius, bending toward the axis
+        self.assertEqual(pts[-1][1], 12.7)
+        # LCF 0.25995" is 0.13 um from the outline's 0.259945": that point is the top
+        self.assertEqual((d["diameter"], d["flute_len"]), (25.4, 6.602603))
+        self.assertEqual(d["shank_d"], 25.4)  # the head above the flutes is the neck: never thinner
+        self.assertEqual(result.version, 1)  # CamCraft writes no newer number for a form mill
+        self.assertEqual(self.verifies(result), [])
+        self.assertIsNone(formmill.refusal(pts))
+
+    def test_radius_mill(self):
+        d, result = one(radius_mill())
+        self.assertEqual(d["form"]["points"], [[0.0, 0.0, 0.0], [0.0, 3.175, 0.0], [0.127, 3.175, -1.9812],
+                                               [2.1082, 5.1562, 0.0]])
+        self.assertEqual((d["kind"], d["diameter"], d["flute_len"]), ("form_mill", 10.3124, 2.1082))
+        self.assertEqual((d["shank_d"], d["shank_len"]), (12.7, 6.35))  # SFDM, LB - LCF
+        self.assertEqual(self.verifies(result), [])
+        # SpeTool W09004: flutes past the radius, no pilot land, a head up to its shoulder
+        d, result = one(radius_mill({"DC": 0.028, "RE": 0.375, "tip-length": 0, "LCF": 0.75, "LB": 1.5,
+                                     "SFDM": 0.5, "shoulder-diameter": 0.778, "shoulder-length": 0.875}))
+        self.assertEqual(d["form"]["points"][-2:], [[9.525, 9.8806, 0.0], [19.05, 9.8806, 0.0]])
+        self.assertEqual(self.verifies(result), [])
+
+    def test_radius_mill_head_wider_than_its_shoulder(self):
+        # DATRON: shoulder = DC. Drawn as Fusion draws it, a DC + 2 RE head on a DC neck
+        _, result = one(radius_mill({"DC": 1.3 / 25.4, "RE": 0.3 / 25.4, "tip-length": 0, "LCF": 0.3 / 25.4,
+                                     "SFDM": 1.3 / 25.4, "shoulder-diameter": 1.3 / 25.4, "shoulder-length": 0.4 / 25.4}))
+        self.assertTrue(any("wider than its 1.3 mm shoulder" in w for w in result.warnings))
+        self.assertEqual(self.verifies(result), [])
+
+    def test_step_in_at_the_flute_length_is_the_neck(self):
+        # Harvey RRH0100: a 0.010" reamer whose neck steps in right at LCF
+        reamer = tool("form mill", unit="inches", description="RIGHT HAND SPIRAL REAMER", geometry={
+            "DC": 0.01, "LCF": 0.078, "LB": 0.5486755, "OAL": 1.5, "SFDM": 0.125, "NOF": 4, "profile": [
+                {"end": [0, 0]}, {"end": [0.0033, 0]}, {"end": [0.005, 0.0017]}, {"end": [0.005, 0.078]},
+                {"end": [0.0046, 0.078]}, {"end": [0.0046, 0.125]},
+                {"arc": True, "ccw": False, "center": [0.3796, 0.125], "end": [0.0102971, 0.190118]},
+                {"end": [0.0625, 0.486175]}, {"end": [0.0625, 1.5]}, {"end": [0, 1.5]}]})
+        d, result = one(reamer)
+        self.assertEqual(d["form"]["points"][-1], [1.9812, 0.127, 0.0])
+        self.assertAlmostEqual(d["shank_d"], 0.23368)
+        self.assertEqual(self.verifies(result), [])
+
+    def test_refused(self):
+        plate_chamfer = [{"end": [0, 0]}, {"end": [0.125, 0]}, {"end": [0.125, 0.06]}, {"end": [0.0943431, 0.0906569]},
+                         {"end": [0.125, 0.159]}, {"end": [0.125, 2.5]}, {"end": [0, 2.5]}]
+        concave_radius = [{"end": [0, 0]}, {"end": [0.375, 0]}, {"end": [0.375, 0.125]},
+                          {"arc": True, "ccw": False, "center": [0.375, 0.2812], "end": [0.375, 0.4374]},
+                          {"end": [0.375, 3.25]}, {"end": [0, 3.25]}]
+        for e, why in ((corner_rounding(plate_chamfer, {"LCF": 0.159}), "narrows going up"),
+                       (corner_rounding(concave_radius, {"LCF": 0.562}), "over 90 degrees"),
+                       (corner_rounding([]), "no profile"),
+                       (corner_rounding(geometry={"LCF": 4}), "under its"),
+                       (corner_rounding([{"end": [0, 0]}, {"end": [0.2, 0]}, {"end": [0.2, 0.3]}, {"end": [0.3, 0.1]},
+                                         {"end": [0.5, 3.25]}]), "runs back down"),
+                       (radius_mill({"LCF": 0.05}), "inside its"),
+                       (radius_mill({"RE": 0}), "corner radius (RE)")):
+            result = convert([e])
+            self.assertEqual(len(result.skipped), 1, why)
+            self.assertIn(why, result.skipped[0].reason)
+            self.assertEqual(result.skipped[0].category, "roundover bit" if e["type"] == "radius mill" else "form mill")
+        # a thread mill by name stays one, or is skipped as one
+        result = convert([corner_rounding(plate_chamfer, {"LCF": 0.159}, description="THREAD MILL")])
+        self.assertIn("thread mill", result.skipped[0].reason)
+
+    def test_output_check_reads_the_outline(self):
+        for e, change in ((corner_rounding(), lambda d: d["form"]["points"][2].__setitem__(2, 6.35)),   # bulges out
+                          (corner_rounding(), lambda d: d["form"]["points"][2].__setitem__(2, 0.0)),    # its chord
+                          (corner_rounding(), lambda d: d["form"]["points"][1].__setitem__(1, 5.2)),    # pilot
+                          (corner_rounding(), lambda d: d["form"].update(pilot_len=1.0)),
+                          (corner_rounding(), lambda d: d.update(diameter=25.0)),
+                          (corner_rounding(), lambda d: d.update(shank_d=19.05)),                     # thinner than the head
+                          (corner_rounding(), lambda d: d.update(kind="end_mill")),
+                          (radius_mill(), lambda d: d["form"]["points"][2].__setitem__(2, 1.9812)),
+                          (radius_mill(), lambda d: d["form"]["points"][-1].__setitem__(0, 2.2))):
+            d, result = one(e)
+            change(d)
+            self.assertTrue(self.verifies(result))
+
+    def test_camcraft_rules(self):
+        ok = [[0, 0, 0], [0, 1, 0], [0.5, 1, -3], [3.5, 4, 0], [5, 4, 0]]
+        self.assertIsNone(formmill.refusal(ok))
+        for pts, why in (([[0, 0.1, 0], [1, 1, 0]], "starts on the axis"),
+                         ([[0, 0, 0], [0, 2, 0], [1, 1, 0]], "narrows"),
+                         ([[0, 0, 0], [0, 1, 0.1], [3, 4, 0]], "half its chord"),
+                         ([[0, 0, 0], [0, 1, 3], [4, 1, 0]], "narrows"),  # convex past its widest
+                         ([[0, 0, 0], [1, 1, 0], [0.5, 2, 0]], "runs back"),
+                         ([[0, 0, 0]] + [[i, 1 + i, 0] for i in range(64)], "at most 64")):
+            self.assertIn(why, formmill.refusal(pts))
+        d, _ = one(radius_mill())
+        d["diameter"] = 11.0
+        self.assertIn("are its outline's", why_not_sane(d))
+        d, _ = one(tool())
+        d["form"] = {"points": ok}
+        self.assertIn("only a form mill", why_not_sane(d))
+
+    def test_default_surface_speed_holds_at_the_widest(self):
+        d, result = one(radius_mill(presets=[]), Options(default_vc=100, default_feed=500, kind_defaults={}))
+        self.assertAlmostEqual(d["rpm"], 100000 / (math.pi * d["diameter"]), places=3)
+        self.assertEqual(self.verifies(result), [])
+        d, _ = one(radius_mill(presets=[]), Options(default_vc=100, default_feed=500,
+                                                    kind_defaults={"form_mill": {"rpm": 9000}}))
+        self.assertEqual(d["rpm"], 9000)
+
+    def test_cli_warns_that_no_operation_cuts_with_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "forms.json"
+            src.write_text(json.dumps({"data": [corner_rounding(), radius_mill()]}))
+            err = io.StringIO()
+            with redirect_stdout(io.StringIO()), redirect_stderr(err):
+                self.assertEqual(main([str(src), "-o", str(Path(tmp) / "out.camtools")]), 0)
+        self.assertIn("2 form mills", err.getvalue())
+        self.assertIn("no operation cuts with a form mill yet", err.getvalue())
+
+
 def multi_form(geometry=None, pitch=0.8, rows=10, dc=3.9, height=0.6, flank=30.0, neck=6.0, shape=None, **extra):
     """A multi-form thread mill stored as a form mill (#37): teeth, a neck, a cone to a 6 mm shank."""
     root, rise = dc / 2 - height * pitch, height * pitch * math.tan(math.radians(flank))
@@ -1120,7 +1267,7 @@ class SingleToothTests(unittest.TestCase):
 
     def test_refused(self):
         for entry, why in ((single_tooth(flat=0.2), "fits no pitch"), (single_tooth(flank=(30, 27.5)), "60 degree"),
-                           (single_tooth(flank=(14.5, 30)), "60 degree"), (single_tooth(description="SINGLE FORM CUTTER"), "counterpart")):
+                           (single_tooth(flank=(14.5, 30)), "60 degree"), (single_tooth(description="SINGLE FORM CUTTER"), "undercut form")):
             self.assertIn(why, self.reason(entry))
 
     def test_shank_under_the_holder(self):
