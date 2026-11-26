@@ -1,4 +1,3 @@
-import dataclasses
 import io
 import math
 import json
@@ -910,11 +909,11 @@ def tapered(geometry=None, **extra):
                 geometry={"DC": 2, "LCF": 20, "LB": 40, "OAL": 60, "SFDM": 6, "TA": 3, "RE": 0, **(geometry or {})}, **extra)
 
 
-TAPERS = Options(unreleased_tapers=True)
+TAPERS = Options()
 
 
 class TaperedMillTests(unittest.TestCase):
-    """#10: tapered mills, for a CamCraft newer than 0.26.0."""
+    """#10: tapered mills, as CamCraft 0.27.0's taper with a flat or ball tip."""
 
     def verifies(self, result):
         with tempfile.TemporaryDirectory() as tmp:
@@ -925,10 +924,10 @@ class TaperedMillTests(unittest.TestCase):
         """The tip radius of a cone tangent to a 1 mm ball."""
         return (1 - math.sin(math.radians(angle))) / math.cos(math.radians(angle))
 
-    def test_needs_the_flag(self):
+    def test_written_by_default(self):
         result = convert([tapered(), tapered({"RE": 1})])
-        self.assertEqual([s.category for s in result.skipped], ["tapered mill", "tapered ball mill"])
-        self.assertIn("--unreleased-tapers", result.skipped[0].reason)
+        self.assertEqual(result.skipped, [])
+        self.assertEqual(sorted(t["definition"]["tip_form"] for t in result.tools), ["ball", "flat"])
 
     def test_flat_tip(self):
         d, result = one(tapered(), TAPERS)
@@ -1040,7 +1039,7 @@ class TaperedMillTests(unittest.TestCase):
         self.assertTrue(any("over its 6 mm shank" in w for w in result.warnings))
 
     def test_default_surface_speed_holds_at_the_widest(self):
-        d, result = one(tapered(presets=[]), Options(unreleased_tapers=True, default_vc=100, default_feed=500))
+        d, result = one(tapered(presets=[]), Options(default_vc=100, default_feed=500))
         self.assertAlmostEqual(d["rpm"], 100000 / (math.pi * d["diameter"]), places=3)
         self.assertEqual(self.verifies(result), [])
 
@@ -1486,13 +1485,13 @@ class UndercutShankTests(unittest.TestCase):
 
 
 class SkipCategoryTests(unittest.TestCase):
-    def test_tapered_ball_and_roundover_named(self):
+    def test_roundover_named(self):
         r = convert([
-            tool("tapered mill", geometry={"RE": 0.5, "TA": 5}),
+            tool("tapered mill", geometry={"RE": 0.5, "TA": 5}),  # written since CamCraft 0.27.0 (#10)
             tool("ball end mill", geometry={"DC": 6.35, "RE": 6.35}),
             tool(),
         ])
-        self.assertEqual(sorted(s.category for s in r.skipped), ["roundover bit", "tapered ball mill"])
+        self.assertEqual(sorted(s.category for s in r.skipped), ["roundover bit"])
 
     def test_slitting_saw_is_t_slot(self):
         # RobbJack-style saw: 0.75" head, 0.002" thick, on a 0.25" arbor stub
@@ -1877,8 +1876,6 @@ class PrivateLibraryTests(unittest.TestCase):
                 self.check(result)
                 # a catalog without presets converts on defaults only (#16's thread mills)
                 self.check(convert(load_library(src), DEFAULT_SPEEDS))
-                if any(e.get("type") == "tapered mill" for e in load_library(src)):
-                    self.check(convert(load_library(src), dataclasses.replace(DEFAULT_SPEEDS, unreleased_tapers=True)))
                 if not src.is_relative_to(THIRD_PARTY):
                     unexplained = [f"{s.name}: {s.reason}" for s in result.skipped if not s.category]
                     self.assertEqual(unexplained, [])

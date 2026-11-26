@@ -1,8 +1,9 @@
 """Watch CamCraft for the tool types this converter is waiting on.
 
 Runs first in the suite (alphabetical order). It asks GitHub whether the
-CamCraft issues that block the tool types we skip (tapered, roundover,
-reamer, counterbore, corner radius dovetail, left-hand) are still open, and whether
+CamCraft issues that block the tool types we skip or write short of the real
+cutter (V-bit tips, roundover, reamer, counterbore, corner radius dovetail,
+left-hand) are still open, and whether
 CamCraft's tool kinds changed. When one fails, CamCraft may now support tools
 we skip: see
 https://github.com/bnegt/Fusitool2Craftool/issues/1
@@ -23,10 +24,9 @@ TRACKING = "https://github.com/bnegt/Fusitool2Craftool/issues/1"
 
 # CamCraft issue -> the Fusion tools we skip until it is solved.
 BLOCKING_ISSUES = {
-    895: "tapered ball mills / tapered mills, and V-bits with a tip diameter",
+    895: "V-bits with a tip diameter (written sharp: CamCraft 0.27.0 has a flat tip, but no operation cuts with it)",
     896: "roundover bits (and other form cutters)",
     897: "reamers and counterbores (no CamCraft kind)",
-    3368: "tapered mills (tip form: sharp, flat, ball)",
     4004: "dovetail mills with a corner radius (our #29)",
     4031: "left-hand drills and thread mills (our #41)",
 }
@@ -34,18 +34,17 @@ BLOCKING_ISSUES = {
 # #14: stand-alone Fusion holders wait for a user holder library in a
 # *release* (#3645). The release's reader is the truth (main runs ahead), so
 # the watch reads the latest release. .camtools versions 5 (drawn cutters,
-# NeoTech/Camcraft#3904) and 6 (taper tip forms, #3368) are on main and are
-# not the holder library.
+# NeoTech/Camcraft#3904) and 6 (taper tip forms, #3368, our #10) are in
+# v0.27.0 and are not the holder library.
 HOLDER_LIBRARY_ISSUE = 3645
 HOLDER_TRACKING = "https://github.com/bnegt/Fusitool2Craftool/issues/14"
-RELEASED_CAMTOOLS_VERSION = 4  # v0.26.0: VERSION 1 .. HOLDER_REF_VERSION 4
+RELEASED_CAMTOOLS_VERSION = 6  # v0.27.0: VERSION 1 .. TIP_FORM_VERSION 6
 
 # A closed issue counts once the latest release's source holds its marker.
 # For #4004 and #4031 that is a guess at how the fix will look: today undercut.rs
 # only writes ``corner_r: 0.0``, and tools.rs has no ``cutter_hand``. If one
 # closes and the skip stays, look.
 RELEASE_MARKERS = {
-    3368: ("crates/app/src/tool_library.rs", "TIP_FORM_VERSION"),
     4004: ("crates/tools/src/undercut.rs", "tool.corner_r"),
     4031: ("crates/tools/src/tools.rs", "cutter_hand"),
 }
@@ -96,8 +95,7 @@ class CamCraftUpstreamTests(unittest.TestCase):
         if newest > RELEASED_CAMTOOLS_VERSION:
             self.fail(
                 f"CamCraft {tag} reads .camtools version {newest} (was {RELEASED_CAMTOOLS_VERSION}): "
-                f"5 is drawn cutters (the neck of a single-form thread mill could be one), "
-                f"6 is taper tip forms (#10: --unreleased-tapers can become the default), anything newer may be the user holder library "
+                f"anything newer than 6 (taper tip forms) may be the user holder library "
                 f"(#{HOLDER_LIBRARY_ISSUE}, see {HOLDER_TRACKING}). "
                 f"Convert what is new, then raise RELEASED_CAMTOOLS_VERSION."
             )
