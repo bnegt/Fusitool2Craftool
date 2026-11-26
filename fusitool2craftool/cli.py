@@ -279,6 +279,10 @@ def convert_file(src: Path, output: Path, args, options: Options, quiet_empty: b
     print(f"wrote {len(result.tools)} tool(s) to {written}"
           + (f" ({len(result.skipped)} skipped)" if result.skipped else ""))
 
+    forms = sum(t["definition"]["kind"] == "form_mill" for t in result.tools)
+    if forms:
+        print(f"warning: {forms} {plural('form mill', forms)} in {written.name}: CamCraft 0.27.0 imports them "
+              f"with their outline, but no operation cuts with a form mill yet", file=sys.stderr)
     tapers = sum("tip_form" in t["definition"] for t in result.tools)
     if tapers:
         print(f"warning: {tapers} {plural('tapered mill', tapers)} in {written.name}: CamCraft 0.27.0 "

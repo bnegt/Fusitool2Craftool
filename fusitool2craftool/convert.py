@@ -321,7 +321,9 @@ def convert_tool(entry: dict, options: Options, presets_report: Counter | None =
         kind, ftype = _tapered_type(entry)
     elif ftype == "form mill":
         from . import threadform
-        kind = "thread_mill" if threadform.is_named(entry) else None
+        kind = "thread_mill" if threadform.is_named(entry) else "form_mill"  # #37, #11
+    elif ftype == "radius mill":
+        kind = "form_mill"  # #11
     if kind is None:
         raise ToolRefused(f"Fusion tool type '{ftype or '?'}' has no CamCraft counterpart yet")
 
@@ -454,6 +456,15 @@ def convert_tool(entry: dict, options: Options, presets_report: Counter | None =
         d["pitch"] = pitch
         if ftype == "tap left hand":
             d["thread_hand"] = "left"
+    elif kind == "form_mill":
+        from . import formmill
+        form = formmill.read(entry, length, lcf, body, warnings)
+        d["form"] = {"points": form.points}
+        d["diameter"] = 2 * max(p[1] for p in form.points)
+        d["flute_len"] = form.points[-1][0]
+        if form.shaft is not None:
+            d["shank_d"], d["shank_len"], below = _split_neck(form.shaft)
+        # a radius mill's shoulder and shank are an end mill's: _wide_shank
     elif ftype == "form mill":
         form = threadform.read(entry, dc, lcf, body)
         d["pitch"], d["tip_angle"], d["flute_len"] = form.pitch, 60.0, form.flute_len
@@ -499,8 +510,8 @@ def convert_tool(entry: dict, options: Options, presets_report: Counter | None =
     flutes = int(nof) if nof is not None and float(nof).is_integer() and nof >= 1 else None
     # a flat bottom or sharply pointed drill keeps Fusion's drill speeds (its feed is v_f_plunge)
     speed_kind = "drill" if kind == "drill" else d["kind"]
-    # a tapered mill's DC is its tip: --default-vc holds at its widest
-    speed_d = d["diameter"] if ftype == "tapered mill" else dc
+    # a tapered mill's DC is its tip, a radius mill's its pilot: --default-vc holds at the widest
+    speed_d = d["diameter"] if ftype == "tapered mill" or kind == "form_mill" else dc
     rpm, feed, preset = _speeds(entry, options, unit, warnings, speed_kind, d["pitch"], speed_d, flutes,
                                 defaults_report if defaults_report is not None else Counter())
     d["material_group"] = _material_group(preset, options)
@@ -625,6 +636,18 @@ def why_not_sane(d: dict) -> str | None:
         why = _undercut_refusal(d)
         if why:
             return why
+    if ("form" in d) != (kind == "form_mill"):
+        return "only a form mill has a form outline" if "form" in d else "a form mill needs a form outline"
+    if kind == "form_mill":
+        from . import formmill
+        points = d["form"]["points"]
+        why = formmill.refusal(points)
+        if why:
+            return why
+        r, z = max(p[1] for p in points), max(p[0] for p in points)
+        if abs(dia - 2 * r) > 1e-6 or abs(d["flute_len"] - z) > 1e-6:
+            return (f"a form mill's diameter and flute length are its outline's: {2 * r:.4f} mm and {z:.4f} mm, "
+                    f"not {dia} mm and {d['flute_len']} mm")
     for row in d.get("cutting_data", []):
         for k in ("stepdown", "stepover"):
             if k in row and not (math.isfinite(row[k]) and row[k] > 0):
@@ -1301,7 +1324,7 @@ def preset_feed(preset: dict, kind: str, pitch: float, unit: float) -> tuple[flo
 
 
 DEFAULT_FIELDS = ("rpm", "feed", "vc", "fz")
-DEFAULT_KINDS = tuple(sorted(set(KINDS.values()) | {"bull_nose", "keyseat", "thread_mill_single"}))
+DEFAULT_KINDS = tuple(sorted(set(KINDS.values()) | {"bull_nose", "keyseat", "thread_mill_single", "form_mill"}))
 
 
 def _check_defaults(options: Options) -> None:

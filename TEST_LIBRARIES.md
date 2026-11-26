@@ -6,10 +6,10 @@ download them into `private/test-libraries/` (git-ignored). The tests then
 convert and verify every one of them (`PrivateLibraryTests` in
 `tests/test_convert.py`).
 
-Last checked 2026-11-26 (with default speeds): 67 libraries convert, 135,039
+Last checked 2026-11-26 (with default speeds): 67 libraries convert, 136,629
 tools written, all verified and accepted by CamCraft 0.27.0 (with and without
-`--all-presets`): 27 of the sources below with 7,867 tools, and 40 of
-[Autodesk's vendor libraries](#autodesks-vendor-libraries) with 127,172. The
+`--all-presets`): 27 of the sources below with 7,870 tools, and 40 of
+[Autodesk's vendor libraries](#autodesks-vendor-libraries) with 128,759. The
 others convert to nothing: `OMAX.json` (one waterjet), three holder libraries
 and two probe libraries.
 
@@ -68,8 +68,8 @@ or with only placeholder or default speeds, gives none), "With defaults" uses th
 | Library (catalogue name) | Entries | Convert | With defaults | Mostly |
 |---|---|---|---|---|
 | Harvey Tool/End Mills | 11,937 | 0 | 11,936 | flat end mill, ball end mill, bull nose end mill |
-| Harvey Tool/Holemaking and Threading | 3,959 | 0 | 2,703 | drill, form mill, spot drill |
-| Harvey Tool/Specialty Profiles | 7,866 | 0 | 5,867 | slot mill, chamfer mill, form mill |
+| Harvey Tool/Holemaking and Threading | 3,959 | 0 | 3,514 | drill, form mill, spot drill |
+| Harvey Tool/Specialty Profiles | 7,866 | 0 | 6,585 | slot mill, chamfer mill, form mill |
 | Helical Solutions/End Mills | 6,007 | 0 | 6,007 | bull nose end mill, flat end mill, ball end mill |
 | Helical Solutions/Specialty Profiles | 190 | 0 | 190 | chamfer mill, spot drill |
 | BitsBits/BitsBits Cutting Tools | 62 | 62 | 62 | flat end mill, tapered mill, ball end mill |
@@ -81,7 +81,7 @@ or with only placeholder or default speeds, gives none), "With defaults" uses th
 | Haas Tooling/Haas Holders | 404 | 0 | 0 | holder |
 | Haimer/Haimer Holders | 557 | 0 | 0 | holder |
 | SwiftCARB/End Mills | 23,574 | 0 | 23,571 | bull nose end mill, flat end mill, ball end mill |
-| DATRON/DATRON Cutting Tools | 1,003 | 938 | 938 | flat end mill, drill, chamfer mill |
+| DATRON/DATRON Cutting Tools | 1,003 | 971 | 971 | flat end mill, drill, chamfer mill |
 | Delta Tools/HPC Endmill Solid Carbide | 154 | 154 | 154 | flat end mill, bull nose end mill |
 | Destiny Tool/Destiny Tool | 1,791 | 0 | 1,791 | flat end mill, bull nose end mill, ball end mill |
 | Renishaw/Renishaw - OMP Probes | 16 | 0 | 0 | probe |
@@ -89,7 +89,7 @@ or with only placeholder or default speeds, gives none), "With defaults" uses th
 | Tormach/Tormach - 15L Slant-PRO - Starter | 15 | 15 | 15 | turning general, turning grooving, turning threading |
 | Tormach/Tormach - PCNC 440, PCNC 770 - Starter | 20 | 16 | 16 | flat end mill, holder, spot drill |
 | Tormach/Tormach - PCNC 1100 - Starter | 20 | 16 | 16 | flat end mill, holder, spot drill |
-| Sandvik Coromant/Solid End Mills | 2,876 | 0 | 2,844 | bull nose end mill, flat end mill, ball end mill |
+| Sandvik Coromant/Solid End Mills | 2,876 | 0 | 2,869 | bull nose end mill, flat end mill, ball end mill |
 | Sandvik Coromant/Solid Hole Making | 4,315 | 0 | 4,085 | tap right hand, drill, reamer |
 | Guhring/Solid Hole Making | 20,121 | 0 | 18,808 | drill, center drill, spot drill |
 | NexGen Tooling/NexGen Tooling | 3,981 | 0 | 3,981 | bull nose end mill, flat end mill, ball end mill |
@@ -119,12 +119,12 @@ or with only placeholder or default speeds, gives none), "With defaults" uses th
 | Ingersoll/Turning Metric/Turning Metric | - | - | - | not available |
 | Widia/Turning Imperial/Turning Imperial | - | - | - | not available |
 | Widia/Turning Metric/Turning Metric | - | - | - | not available |
-| **Total** | **134,498** | **10,487** | **127,172** | |
+| **Total** | **134,498** | **10,520** | **128,759** | |
 
-The tools skipped even with defaults, by reason: form mill 2,398; left-hand
-cutter 1,313; reamer 876; counterbore 434; dovetail with a corner radius 372;
-roundover bit 280; probe 22; round grooving tool 5; tapered mill without a
-taper angle 1; other 5.
+The tools skipped even with defaults, by reason: left-hand cutter 1,313; form
+mill 1,081 (an undercut outline, or none); reamer 876; counterbore 434; dovetail
+with a corner radius 372; probe 22; roundover bit 10; round grooving tool 5;
+tapered mill without a taper angle 1; other 5.
 
 ## Fusion tool types covered
 
@@ -154,7 +154,7 @@ or is skipped under a family name
 | electric arc wire | **none** | - | skipped: additive head |
 | face mill | 176 | 19 | `end_mill` |
 | flat end mill | 25,128 | 55 | `end_mill` |
-| form mill | 3,028 | 9 | skipped: form mill (`thread_mill` or `thread_mill_single` for thread mills) |
+| form mill | 3,028 | 9 | `form_mill` (`thread_mill` or `thread_mill_single` for thread mills; skipped: an undercut outline) |
 | holder | 1,693 | 16 | counted, see `--holders` |
 | laser cutter | 5 | 4 | skipped: sheet cutting head |
 | laser powder | **none** | - | skipped: additive head |
@@ -162,7 +162,7 @@ or is skipped under a family name
 | lollipop mill | 1,018 | 5 | `lollipop` |
 | plasma cutter | 1 | 1 | skipped: sheet cutting head |
 | probe | 29 | 8 | skipped: probe |
-| radius mill | 273 | 4 | skipped: roundover bit |
+| radius mill | 273 | 4 | `form_mill` |
 | reamer | 881 | 9 | skipped: reamer |
 | shaft | **none** | - | skipped: holder part |
 | slot mill | 3,750 | 11 | `t_slot` |

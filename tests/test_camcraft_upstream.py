@@ -2,8 +2,8 @@
 
 Runs first in the suite (alphabetical order). It asks GitHub whether the
 CamCraft issues that block the tool types we skip or write short of the real
-cutter (V-bit tips, roundover, reamer, counterbore, corner radius dovetail,
-left-hand) are still open, and whether
+cutter (V-bit tips, undercut form mills, reamer, counterbore, corner radius
+dovetail, left-hand) are still open, and whether
 CamCraft's tool kinds changed. When one fails, CamCraft may now support tools
 we skip: see
 https://github.com/bnegt/Fusitool2Craftool/issues/1
@@ -25,7 +25,7 @@ TRACKING = "https://github.com/bnegt/Fusitool2Craftool/issues/1"
 # CamCraft issue -> the Fusion tools we skip until it is solved.
 BLOCKING_ISSUES = {
     895: "V-bits with a tip diameter (written sharp: CamCraft 0.27.0 has a flat tip, but no operation cuts with it)",
-    896: "roundover bits (and other form cutters)",
+    896: "undercut form mills: a CamCraft 0.27.0 form mill outline may not narrow going up (our #11)",
     897: "reamers and counterbores (no CamCraft kind)",
     4004: "dovetail mills with a corner radius (our #29)",
     4031: "left-hand drills and thread mills (our #41)",
@@ -49,12 +49,12 @@ RELEASE_MARKERS = {
     4031: ("crates/tools/src/tools.rs", "cutter_hand"),
 }
 
-# CamCraft's ToolKind variants as of v0.26.0.
+# CamCraft's ToolKind variants as of v0.27.0.
 KNOWN_KINDS = {
     "EndMill", "BallNose", "BullNose", "Drill", "Tap", "Bore", "Turning",
     "Groove", "Thread", "Form", "Taper", "Probe", "Torch", "Waterjet",
     "Electrode", "ThreadMill", "ThreadMillSingle", "Wire", "TSlot",
-    "Keyseat", "Dovetail", "Lollipop",
+    "Keyseat", "Dovetail", "Lollipop", "FormMill",
 }
 
 
