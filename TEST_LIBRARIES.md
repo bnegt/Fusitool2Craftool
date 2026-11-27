@@ -6,12 +6,13 @@ download them into `private/test-libraries/` (git-ignored). The tests then
 convert and verify every one of them (`PrivateLibraryTests` in
 `tests/test_convert.py`).
 
-Last checked 2026-11-26 (with default speeds): 67 libraries convert, 136,629
+Last checked 2026-11-27 (with default speeds): 75 libraries convert, 137,328
 tools written, all verified and accepted by CamCraft 0.27.0 (with and without
-`--all-presets`): 27 of the sources below with 7,870 tools, and 40 of
+`--all-presets`): 27 of the sources below with 7,870 tools, 8 of Fusion's own
+samples with 699, and 40 of
 [Autodesk's vendor libraries](#autodesks-vendor-libraries) with 128,759. The
-others convert to nothing: `OMAX.json` (one waterjet), three holder libraries
-and two probe libraries.
+others convert to nothing: `OMAX.json` (one waterjet), Fusion's two cutting
+head samples, six holder libraries and three probe libraries.
 
 ## Sources
 
@@ -36,12 +37,14 @@ and two probe libraries.
 
 Not downloadable as a file, but worth having:
 
-- **Autodesk's own "Fusion Library" samples** (every Fusion tool type): set
+- **Autodesk's own "Fusion Library" samples** (14 libraries, 804 entries, 29
+  tool types; none of the 7 types missing below): set
   `INCLUDE_FUSION_SAMPLES = True` in
   [`fusion_script/ExportAllToolLibraries`](fusion_script/ExportAllToolLibraries/README.md),
   run it in Fusion and put its `Fusion/` folder in
   `private/test-libraries/fusion-samples/`
-  ([#19](https://github.com/bnegt/Fusitool2Craftool/issues/19)).
+  ([#19](https://github.com/bnegt/Fusitool2Craftool/issues/19)). Last exported
+  2026-11-27.
 - **Vendor libraries that need Fusion or an add-in:**
   [Kennametal](https://www.kennametal.com/se/en/resources/software/fusion.html)
   (milling), Sandvik CoroPlus, Amana, Whiteside.
@@ -131,52 +134,53 @@ tapered mill without a taper angle 1; other 5.
 Tools per type in all of `private/test-libraries/`. Autodesk's
 [schema](https://cam.autodesk.com/tools/tools/Tooling%20Schema/ToolLibrary.schema.json)
 names 40 types; 33 occur in a real library. The other 7 are in none of them,
-so what we do with them rests on the schema alone (#19). Every type converts
+not even in Fusion's own samples, so what we do with them rests on the schema
+alone (#19). Every type converts
 or is skipped under a family name
 (`test_every_fusion_type_converts_or_is_named`).
 
 | Fusion type | Tools | Libraries | Result |
 |---|---|---|---|
-| ball end mill | 11,978 | 42 | `ball_nose` |
-| boring bar | 1 | 1 | `bore` |
-| bull nose end mill | 49,899 | 28 | `bull_nose` |
-| center drill | 373 | 6 | `drill` |
-| chamfer mill | 2,296 | 29 | `taper` |
+| ball end mill | 12,010 | 46 | `ball_nose` |
+| boring bar | 3 | 3 | `bore` |
+| bull nose end mill | 49,931 | 32 | `bull_nose` |
+| center drill | 383 | 7 | `drill` |
+| chamfer mill | 2,304 | 33 | `taper` |
 | circle segment barrel | 1 | 1 | skipped: circle segment mill |
 | circle segment lens | 1 | 1 | skipped: circle segment mill |
 | circle segment oval | 1 | 1 | skipped: circle segment mill |
 | circle segment taper | **none** | - | skipped: circle segment mill |
 | corner chamfer end mill | **none** | - | `bull_nose` |
-| counter bore | 435 | 3 | skipped: counterbore |
-| counter sink | 108 | 7 | `taper` |
-| dovetail mill | 633 | 5 | `dovetail` |
-| drill | 34,976 | 29 | `drill` (`taper` for a point of 60 degrees or less) |
+| counter bore | 439 | 5 | skipped: counterbore |
+| counter sink | 118 | 13 | `taper` |
+| dovetail mill | 638 | 7 | `dovetail` |
+| drill | 35,350 | 33 | `drill` (`taper` for a point of 60 degrees or less) |
 | electric arc wire | **none** | - | skipped: additive head |
-| face mill | 176 | 19 | `end_mill` |
-| flat end mill | 25,128 | 55 | `end_mill` |
-| form mill | 3,028 | 9 | `form_mill` (`thread_mill` or `thread_mill_single` for thread mills; skipped: an undercut outline) |
-| holder | 1,693 | 16 | counted, see `--holders` |
-| laser cutter | 5 | 4 | skipped: sheet cutting head |
+| face mill | 180 | 23 | `end_mill` |
+| flat end mill | 25,158 | 59 | `end_mill` |
+| form mill | 3,032 | 11 | `form_mill` (`thread_mill` or `thread_mill_single` for thread mills; skipped: an undercut outline) |
+| holder | 1,765 | 19 | counted, see `--holders` |
+| laser cutter | 7 | 6 | skipped: sheet cutting head |
 | laser powder | **none** | - | skipped: additive head |
 | laser wire | **none** | - | skipped: additive head |
-| lollipop mill | 1,018 | 5 | `lollipop` |
-| plasma cutter | 1 | 1 | skipped: sheet cutting head |
-| probe | 29 | 8 | skipped: probe |
-| radius mill | 273 | 4 | `form_mill` |
-| reamer | 881 | 9 | skipped: reamer |
+| lollipop mill | 1,024 | 7 | `lollipop` |
+| plasma cutter | 3 | 3 | skipped: sheet cutting head |
+| probe | 35 | 9 | skipped: probe |
+| radius mill | 282 | 6 | `form_mill` |
+| reamer | 887 | 11 | skipped: reamer |
 | shaft | **none** | - | skipped: holder part |
-| slot mill | 3,750 | 11 | `t_slot` |
-| spot drill | 1,249 | 16 | `drill` (`taper` for a point of 60 degrees or less) |
+| slot mill | 3,754 | 13 | `t_slot` |
+| spot drill | 1,280 | 21 | `drill` (`taper` for a point of 60 degrees or less) |
 | tap left hand | 1 | 1 | `tap` |
-| tap right hand | 2,744 | 7 | `tap` |
-| tapered mill | 977 | 13 | `taper` with a flat or ball tip (straight without an angle) |
-| thread mill | 206 | 5 | `thread_mill` |
+| tap right hand | 2,859 | 10 | `tap` |
+| tapered mill | 983 | 15 | `taper` with a flat or ball tip (straight without an angle) |
+| thread mill | 212 | 7 | `thread_mill` |
 | tool block | **none** | - | skipped: holder part |
-| turning boring | 200 | 8 | `bore` |
-| turning general | 334 | 10 | `turning` |
-| turning grooving | 73 | 10 | `groove` |
-| turning threading | 19 | 6 | `thread` |
-| waterjet | 2 | 2 | skipped: sheet cutting head |
+| turning boring | 202 | 10 | `bore` |
+| turning general | 344 | 12 | `turning` |
+| turning grooving | 79 | 12 | `groove` |
+| turning threading | 23 | 8 | `thread` |
+| waterjet | 4 | 4 | skipped: sheet cutting head |
 
 ## Download the others
 
