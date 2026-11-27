@@ -19,8 +19,8 @@ import adsk.core
 # Folder the picker opens in; the export goes into a subfolder of your choice.
 DEFAULT_OUT = os.path.join(os.path.expanduser('~'), 'Documents')
 SUBFOLDER = 'Fusion tool libraries'
-# True also exports Autodesk's built-in "Fusion Library" samples (every tool
-# type Fusion has; handy as converter test data) into a Fusion/ subfolder.
+# True also exports Autodesk's built-in "Fusion Library" samples (14 libraries,
+# 29 tool types; handy as converter test data) into a Fusion/ subfolder.
 INCLUDE_FUSION_SAMPLES = False
 
 
@@ -57,7 +57,14 @@ def export_all(libs, out, log):
     if hasattr(L, 'HubLibraryLocation'):
         locations.append(('Hub', L.HubLibraryLocation))
     if INCLUDE_FUSION_SAMPLES:
-        locations.append(('Fusion', L.FusionLibraryLocation))
+        # The API names it Fusion360LibraryLocation (the UI says "Fusion Library").
+        loc = getattr(L, 'Fusion360LibraryLocation', None)
+        if loc is None:
+            loc = getattr(L, 'FusionLibraryLocation', None)
+        if loc is None:
+            log.append('Fusion: no sample library location in this Fusion API')
+        else:
+            locations.append(('Fusion', loc))
     for label, loc in locations:
         try:
             root = libs.urlByLocation(loc)

@@ -117,7 +117,7 @@ def read(entry: dict, length, lcf: float, body: float | None, warnings: list[str
     if body is None:
         raise c.ToolRefused("form mill without a body length (LB/OAL)")
     for end, what in ((lcf, "flute length (LCF)"), (body, "body length (LB)")):
-        if segments[-1].b[0] < end - 1e-6:
+        if segments[-1].b[0] < end - SNAP:
             raise c.ToolRefused(f"form mill whose outline ends at {segments[-1].b[0]:.4g} mm, under its {end:.4g} mm {what}")
     cutter, above = _cut(segments, lcf)
     points = _points(cutter)
@@ -263,7 +263,7 @@ def _shaft(above: list[Segment], start: float, body: float) -> list[tuple[float,
             at = (lambda q: r0 + (r1 - r0) * (q - z0) / (z1 - z0)) if z1 - z0 > 1e-12 else (lambda q: max(r0, r1))
             out.append((hi - lo, 2 * at(lo), 2 * at(hi)))
             z = hi
-    if abs(z - body) > 1e-6 or not out or any(min(lo, up) <= 0 for _, lo, up in out):
+    if abs(z - body) > SNAP or not out or any(min(lo, up) <= 0 for _, lo, up in out):
         raise c.ToolRefused("form mill whose outline above the flutes does not reach its body length (LB)")
     return out
 

@@ -1105,6 +1105,15 @@ class FormMillTests(unittest.TestCase):
         self.assertEqual(self.verifies(result), [])
         self.assertIsNone(formmill.refusal(pts))
 
+    def test_outline_a_rounding_short_of_its_body_length(self):
+        # Fusion's inch "Form Mill" sample: the outline ends 0.013 um under LB (#19)
+        d, result = one(corner_rounding(geometry={"LB": 3.2500005, "OAL": 3.2500005}))
+        self.assertEqual(d["kind"], "form_mill")
+        self.assertEqual(self.verifies(result), [])
+        # a real gap is still refused
+        result = convert([corner_rounding(geometry={"LB": 3.26, "OAL": 3.26})])
+        self.assertIn("under its 82.8 mm body length", result.skipped[0].reason)
+
     def test_radius_mill(self):
         d, result = one(radius_mill())
         self.assertEqual(d["form"]["points"], [[0.0, 0.0, 0.0], [0.0, 3.175, 0.0], [0.127, 3.175, -1.9812],
