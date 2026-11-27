@@ -124,10 +124,12 @@ or with only placeholder or default speeds, gives none), "With defaults" uses th
 | Widia/Turning Metric/Turning Metric | - | - | - | not available |
 | **Total** | **134,498** | **10,520** | **128,759** | |
 
-The tools skipped even with defaults, by reason: left-hand cutter 1,313; form
-mill 1,081 (an undercut outline, or none); reamer 876; counterbore 434; dovetail
-with a corner radius 372; probe 22; roundover bit 10; round grooving tool 5;
-tapered mill without a taper angle 1; other 5.
+The tools skipped even with defaults, by family (no CamCraft type or shape):
+left-hand cutter 1,313; undercut form mill 947; reamer 876; counterbore 434;
+dovetail with a corner radius 372; probe 22; roundover bit 10; round grooving
+tool 5. Skipped for their Fusion data, with no family (#52): form mills whose
+outline is missing or runs back on itself 134; tapered mill without a taper
+angle 1; other 5.
 
 ## Fusion tool types covered
 

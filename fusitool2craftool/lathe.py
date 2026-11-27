@@ -60,7 +60,7 @@ def definition(entry: dict, options: c.Options, warnings: list[str], report: Cou
 
     family = category(entry)
     if family:
-        raise c.ToolRefused(f"CamCraft has no {family}")
+        raise c.ToolRefused(f"CamCraft has no {family}", shape=True)
 
     shank = max(length(h, "W"), length(h, "H"))
     if not shank:

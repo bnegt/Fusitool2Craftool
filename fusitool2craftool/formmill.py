@@ -215,7 +215,7 @@ def _points(cutter: list[Segment]) -> list[list[float]]:
         if s.center is not None:
             if s.sweep > math.pi / 2 + 1e-6:
                 raise c.ToolRefused("form mill with an arc of over 90 degrees in its outline (an undercut form, "
-                                    "NeoTech/Camcraft#896)")
+                                    "NeoTech/Camcraft#896)", shape=True)
             samples = [s.at(i / ARC_STEPS) for i in range(ARC_STEPS + 1)]
         else:
             samples = [s.a, s.b]
@@ -224,7 +224,7 @@ def _points(cutter: list[Segment]) -> list[list[float]]:
                 raise c.ToolRefused("form mill whose outline runs back down on itself (check it in Fusion)")
             if r1 < r0 - NARROWS:
                 raise c.ToolRefused(f"form mill whose outline narrows going up at {z0:.4g} mm: an undercut form, "
-                                    f"which CamCraft cannot write yet (NeoTech/Camcraft#896)")
+                                    f"which CamCraft cannot write yet (NeoTech/Camcraft#896)", shape=True)
         z, r = round(s.b[0], 6), round(max(s.b[1], pts[-1][1]), 6)
         if math.hypot(z - pts[-1][0], r - pts[-1][1]) < MIN_SEGMENT:
             continue
@@ -232,12 +232,12 @@ def _points(cutter: list[Segment]) -> list[list[float]]:
             pts[-1][2] = round(s.signed_arc(), 6)
         pts.append([z, r, 0.0])
     if len(pts) > MAX_POINTS:
-        raise c.ToolRefused(f"form mill with {len(pts)} points in its outline, over CamCraft's {MAX_POINTS}")
+        raise c.ToolRefused(f"form mill with {len(pts)} points in its outline, over CamCraft's {MAX_POINTS}", shape=True)
     if len(pts) < 2:
         raise c.ToolRefused("form mill without a cutting outline under its flute length")
     why = refusal(pts)
     if why:
-        raise c.ToolRefused(f"form mill: {why}")
+        raise c.ToolRefused(f"form mill: {why}", shape=True)
     return pts
 
 

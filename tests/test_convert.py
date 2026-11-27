@@ -1153,18 +1153,19 @@ class FormMillTests(unittest.TestCase):
         concave_radius = [{"end": [0, 0]}, {"end": [0.375, 0]}, {"end": [0.375, 0.125]},
                           {"arc": True, "ccw": False, "center": [0.375, 0.2812], "end": [0.375, 0.4374]},
                           {"end": [0.375, 3.25]}, {"end": [0, 3.25]}]
-        for e, why in ((corner_rounding(plate_chamfer, {"LCF": 0.159}), "narrows going up"),
-                       (corner_rounding(concave_radius, {"LCF": 0.562}), "over 90 degrees"),
-                       (corner_rounding([]), "no profile"),
-                       (corner_rounding(geometry={"LCF": 4}), "under its"),
-                       (corner_rounding([{"end": [0, 0]}, {"end": [0.2, 0]}, {"end": [0.2, 0.3]}, {"end": [0.3, 0.1]},
-                                         {"end": [0.5, 3.25]}]), "runs back down"),
-                       (radius_mill({"LCF": 0.05}), "inside its"),
-                       (radius_mill({"RE": 0}), "corner radius (RE)")):
+        # an undercut form is a shape CamCraft has not; the rest is Fusion's data (#52)
+        for e, why, family in ((corner_rounding(plate_chamfer, {"LCF": 0.159}), "narrows going up", "form mill"),
+                               (corner_rounding(concave_radius, {"LCF": 0.562}), "over 90 degrees", "form mill"),
+                               (corner_rounding([]), "no profile", None),
+                               (corner_rounding(geometry={"LCF": 4}), "under its", None),
+                               (corner_rounding([{"end": [0, 0]}, {"end": [0.2, 0]}, {"end": [0.2, 0.3]},
+                                                 {"end": [0.3, 0.1]}, {"end": [0.5, 3.25]}]), "runs back down", None),
+                               (radius_mill({"LCF": 0.05}), "inside its", None),
+                               (radius_mill({"RE": 0}), "corner radius (RE)", None)):
             result = convert([e])
             self.assertEqual(len(result.skipped), 1, why)
             self.assertIn(why, result.skipped[0].reason)
-            self.assertEqual(result.skipped[0].category, "roundover bit" if e["type"] == "radius mill" else "form mill")
+            self.assertEqual(result.skipped[0].category, family, why)
         # a thread mill by name stays one, or is skipped as one
         result = convert([corner_rounding(plate_chamfer, {"LCF": 0.159}, description="THREAD MILL")])
         self.assertIn("thread mill", result.skipped[0].reason)
@@ -1713,19 +1714,30 @@ class SkipCategoryTests(unittest.TestCase):
 
     def test_reamer_counterbore_form_mill_named(self):
         r = convert([tool("reamer"), tool("counter bore"), tool("form mill"), tool("probe")])
-        self.assertEqual([s.category for s in r.skipped], ["reamer", "counterbore", "form mill", "probe"])
+        # a form mill has a CamCraft kind: without an outline it is only missing data (#52)
+        self.assertEqual([s.category for s in r.skipped], ["reamer", "counterbore", None, "probe"])
+
+    def test_missing_speeds_name_no_family(self):
+        # Fusion's metric milling sample: a tapered and a radius mill skipped for
+        # speeds alone were listed as having no CamCraft tool type (#52)
+        mills = [tool("tapered mill", presets=[], geometry={"RE": 0.5, "TA": 5}), radius_mill(presets=[])]
+        r = convert(mills)
+        self.assertEqual([(s.category, "spindle speed" in s.reason) for s in r.skipped], [(None, True)] * 2)
+        r = convert(mills, Options(default_vc=100, default_fz=0.02))
+        self.assertEqual((len(r.tools), r.skipped), (2, []))
 
     def test_every_fusion_type_converts_or_is_named(self):
         # the 40 types of Autodesk's ToolLibrary.schema.json (#19)
         families = {t: unsupported_category({"type": t, "geometry": {}}) for t in FUSION_TYPES}
         self.assertEqual(len(families), 40)
-        unnamed = {t for t in FUSION_TYPES if t not in KINDS and not families[t]}
+        has_kind = set(KINDS) | {"tapered mill", "form mill", "radius mill"}
+        unnamed = {t for t in FUSION_TYPES if t not in has_kind and not families[t]}
         self.assertEqual(unnamed, {"holder"})  # counted, not skipped
         for t in FUSION_TYPES:
             with self.subTest(type=t):
                 r = convert([tool(t)])  # milling fields: some types need more, none may crash
                 self.assertEqual(len(r.tools) + len(r.skipped) + r.holders, 1)
-                if families[t]:
+                if families[t] and t not in has_kind:
                     self.assertEqual([s.category for s in r.skipped], [families[t]])
                 r = convert([{"type": t}])
                 self.assertEqual((len(r.tools), len(r.skipped) + r.holders), (0, 1))
@@ -1749,7 +1761,10 @@ class SkipCategoryTests(unittest.TestCase):
                 self.assertEqual(main([str(src)]), 1)
 
     def test_cli_prints_red_skip_summary(self):
-        lib = {"data": [tool("tapered mill", geometry={"RE": 0.5}), tool()]}
+        # a dovetail with a corner radius has no CamCraft shape; a tapered
+        # mill without its angle is only missing data (#52)
+        lib = {"data": [tool("dovetail mill", geometry={"DC": 20, "SFDM": 10, "TA": 30, "RE": 1}),
+                        tool("tapered mill", geometry={"RE": 0.5}), tool()]}
         with tempfile.TemporaryDirectory() as tmp:
             src = Path(tmp) / "lib.json"
             src.write_text(json.dumps(lib))
@@ -1758,8 +1773,10 @@ class SkipCategoryTests(unittest.TestCase):
                     redirect_stderr(err), redirect_stdout(io.StringIO()):
                 self.assertEqual(main([str(src)]), 0)
         text = err.getvalue()
-        self.assertIn("\033[31mNOT IMPORTED: 1 tapered ball mill", text)
-        self.assertIn("\033[31mskipped [tapered ball mill]", text)
+        self.assertIn("\033[31mNOT IMPORTED: 1 corner radius dovetail mill - CamCraft has no tool type", text)
+        self.assertIn("\033[31mskipped [corner radius dovetail mill]", text)
+        self.assertIn("\033[31mskipped: tapered mill test: tapered mill without a taper angle", text)
+        self.assertNotIn("tapered mill -", text)
 
 
 class DefaultSpeedTests(unittest.TestCase):
