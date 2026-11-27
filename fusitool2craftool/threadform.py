@@ -53,7 +53,7 @@ def read(entry: dict, dc: float, lcf: float | None, body: float | None) -> Threa
     if not crests:
         raise c.ToolRefused("thread mill stored as a form mill without teeth in its outline")
     if any(abs(r - dc / 2) > 2 * SAME for _, _, r in crests):
-        raise c.ToolRefused("thread mill stored as a form mill whose teeth are not all on its diameter (a tapered thread?)")
+        raise c.ToolRefused("thread mill stored as a form mill whose teeth are not all on its diameter (a tapered thread?)", shape=True)
     if len(crests) == 1:
         pitch, pitch_min = _pitch_range(points, crests[0])
     else:
@@ -97,7 +97,7 @@ def _check_arc(a: Point, b: Point, center: Point, ccw: bool) -> None:
     # left of the way up is toward the axis: a minor arc around a centre there
     # bulges outward, and a clockwise arc around it is the major one
     if left or ccw or bz < az:
-        raise c.ToolRefused("form mill with a bulging arc in its outline")
+        raise c.ToolRefused("form mill with a bulging arc in its outline", shape=True)
 
 
 def _crests(points: list[Point], lcf: float) -> list[tuple[float, float, float]]:
@@ -123,10 +123,10 @@ def _pitch(crests: list[tuple[float, float, float]]) -> float:
     mean = (mid[-1] - mid[0]) / rows
     # rounded to 1e-6 inch or so in Fusion: 1 um, or 0.1 %
     if any(abs(z1 - z0 - mean) > max(2e-3, mean * PITCH_TOL) for z0, z1 in zip(mid, mid[1:])):
-        raise c.ToolRefused("thread mill stored as a form mill whose rows are not evenly spaced")
+        raise c.ToolRefused("thread mill stored as a form mill whose rows are not evenly spaced", shape=True)
     best = min((*METRIC, *(c.INCH / n for n in PER_INCH)), key=lambda p: abs(p - mean))
     if abs(best - mean) > mean * PITCH_TOL:
-        raise c.ToolRefused(f"thread mill stored as a form mill with a pitch of {mean:.4g} mm, which is no standard one")
+        raise c.ToolRefused(f"thread mill stored as a form mill with a pitch of {mean:.4g} mm, which is no standard one", shape=True)
     return float(best)
 
 
@@ -144,13 +144,13 @@ def _pitch_range(points: list[Point], crest: tuple[float, float, float]) -> tupl
     (z0, r0), (z1, r1) = below[-1], above[0]
     for dz, dr in ((start - z0, r - r0), (z1 - end, r - r1)):
         if abs(math.degrees(math.atan2(dz, dr)) - FLANK) > FLANK_TOL:
-            raise c.ToolRefused("thread mill stored as a form mill whose teeth are not of the 60 degree form")
+            raise c.ToolRefused("thread mill stored as a form mill whose teeth are not of the 60 degree form", shape=True)
     height = min(r - r0, r - r1) + 2e-3  # 2 um of rounding, as for rows of teeth
     coarsest = math.floor(height / c.INTERNAL_DEPTH_PER_PITCH * 1e4) / 1e4
     finest = max(math.ceil((end - start) * 8 * 1e4 - 1e-6) / 1e4, METRIC[0])
     if finest > coarsest:
         raise c.ToolRefused(f"thread mill stored as a form mill whose tooth fits no pitch: its crest needs {finest:.4g} mm, "
-                            f"its height allows {coarsest:.4g} mm")
+                            f"its height allows {coarsest:.4g} mm", shape=True)
     return coarsest, finest
 
 
@@ -160,11 +160,11 @@ def _check_teeth(points: list[Point], crests: list[tuple[float, float, float]], 
         between = [q for q in points if lo_end - 1e-9 <= q[0] <= hi_start + 1e-9]
         for (z0, ra), (z1, rb) in zip(between, between[1:]):
             if abs(rb - ra) > 0.05 * pitch and abs(math.degrees(math.atan2(z1 - z0, abs(rb - ra))) - FLANK) > FLANK_TOL:
-                raise c.ToolRefused("thread mill stored as a form mill whose teeth are not of the 60 degree form")
+                raise c.ToolRefused("thread mill stored as a form mill whose teeth are not of the 60 degree form", shape=True)
         root = min(r for _, r in between)
         if min(r0, r1) - root < c.INTERNAL_DEPTH_PER_PITCH * pitch - 2e-3:
             raise c.ToolRefused(f"thread mill stored as a form mill with {min(r0, r1) - root:.3g} mm high teeth: CamCraft "
-                                f"takes them for {c.INTERNAL_DEPTH_PER_PITCH * pitch:.3g} mm, and would not see their root rub")
+                                f"takes them for {c.INTERNAL_DEPTH_PER_PITCH * pitch:.3g} mm, and would not see their root rub", shape=True)
 
 
 def _above(points: list[Point], start: float, body: float) -> list[tuple[float, float, float]]:

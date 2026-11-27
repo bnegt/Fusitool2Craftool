@@ -176,9 +176,14 @@ NOT IMPORTED: 1 form mill, 1 roundover bit - CamCraft has no tool type for them,
 ```
 
 Other tools that cannot be converted ([Not converted](#not-converted)) are
-listed in red the same way, with their family if it has a name: reamers,
-counterbores, form mills, left-hand cutters, circle segment mills, corner radius dovetail mills,
-probes, holder parts, cutting and additive heads, and some lathe tools. Colour is used when writing to a terminal; set `NO_COLOR=1` to turn it
+listed in red the same way. A tool CamCraft has no type or shape for gets its
+family, and it is counted in the summary line: reamers, counterbores,
+undercut form mills, roundover bits, left-hand cutters, circle segment mills,
+corner radius dovetail mills, probes, holder parts, cutting and additive heads,
+and some lathe tools. A tool skipped for its Fusion data (no speeds, a missing
+length, an outline that can't be read) has no family and is not in the
+summary: CamCraft has a type for it, and better data converts it, for example
+`--default-vc` and `--default-fz` for missing speeds. Colour is used when writing to a terminal; set `NO_COLOR=1` to turn it
 off or `FORCE_COLOR=1` to force it.
 
 ### Import into a running CamCraft

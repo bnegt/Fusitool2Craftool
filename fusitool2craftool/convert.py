@@ -189,7 +189,7 @@ class Skipped:
     name: str
     reason: str
     category: str | None = None
-    """'tapered ball mill', 'roundover bit', ... for known unsupported cutters."""
+    """'reamer', 'roundover bit', ... when CamCraft has no type or shape for the cutter."""
 
 
 @dataclass
@@ -270,7 +270,18 @@ def unsupported_category(entry: dict) -> str | None:
 
 
 class ToolRefused(ValueError):
-    pass
+    """A tool that is not converted.
+
+    ``shape``: CamCraft has no tool type or shape for this cutter, so the
+    report names its family (unsupported_category) and lists it as NOT
+    IMPORTED. Without it the refusal is about Fusion's data (speeds,
+    lengths, an unreadable outline): the tool has a CamCraft kind, and
+    better data converts it (#52).
+    """
+
+    def __init__(self, message: str, shape: bool = False):
+        super().__init__(message)
+        self.shape = shape
 
 
 def convert(entries: list[dict], options: Options | None = None) -> Conversion:
@@ -296,7 +307,7 @@ def convert(entries: list[dict], options: Options | None = None) -> Conversion:
         try:
             definition, warnings = convert_tool(entry, options, out.presets, out.defaults)
         except ToolRefused as e:
-            out.skipped.append(Skipped(label, str(e), unsupported_category(entry)))
+            out.skipped.append(Skipped(label, str(e), unsupported_category(entry) if e.shape else None))
             continue
         name = _unique_name(label, entry, taken)
         taken.add(name)
@@ -325,10 +336,10 @@ def convert_tool(entry: dict, options: Options, presets_report: Counter | None =
     elif ftype == "radius mill":
         kind = "form_mill"  # #11
     if kind is None:
-        raise ToolRefused(f"Fusion tool type '{ftype or '?'}' has no CamCraft counterpart yet")
+        raise ToolRefused(f"Fusion tool type '{ftype or '?'}' has no CamCraft counterpart yet", shape=True)
 
     if is_left_hand(entry):
-        raise ToolRefused("left-hand cutter (HAND): it needs a reversed spindle, and CamCraft would turn it forward")
+        raise ToolRefused("left-hand cutter (HAND): it needs a reversed spindle, and CamCraft would turn it forward", shape=True)
 
     if ftype.startswith("turning "):
         return _convert_lathe(entry, options, warnings, presets_report, defaults_report)
@@ -384,7 +395,7 @@ def convert_tool(entry: dict, options: Options, presets_report: Counter | None =
                 d["corner_r"] = re_
                 warnings.append(f"ball end mill with corner radius {re_:g} mm < D/2 imported as bull nose")
             else:
-                raise ToolRefused(f"corner radius {re_:g} mm exceeds half the {dc:g} mm diameter (form/roundover cutter)")
+                raise ToolRefused(f"corner radius {re_:g} mm exceeds half the {dc:g} mm diameter (form/roundover cutter)", shape=True)
         else:
             d["corner_r"] = dc / 2
     elif kind in ("bull_nose", "end_mill") and re_ > 0:
@@ -393,7 +404,7 @@ def convert_tool(entry: dict, options: Options, presets_report: Counter | None =
             # R12.5001 bull nose), so up to 10 % over D/2 is still one;
             # further over is a form/roundover cutter.
             if re_ > dc / 2 * 1.1:
-                raise ToolRefused(f"corner radius {re_:g} mm exceeds half the {dc:g} mm diameter (form/roundover cutter)")
+                raise ToolRefused(f"corner radius {re_:g} mm exceeds half the {dc:g} mm diameter (form/roundover cutter)", shape=True)
             d["kind"] = "ball_nose"
             d["corner_r"] = dc / 2
             if abs(re_ - dc / 2) > 1e-9:
@@ -971,7 +982,7 @@ def _undercut(d: dict, entry: dict, length, body: float | None,
             a = math.radians(ta)
             thin = corner * ((1 + math.sin(a)) / math.cos(a) - 1)
             raise ToolRefused(f"corner radius {corner:.4g} mm: CamCraft's dovetail has a sharp corner, which puts "
-                              f"its flank {thin:.3g} mm inside the real one")
+                              f"its flank {thin:.3g} mm inside the real one", shape=True)
         d["tip_angle"] = round(90.0 - ta, 6)
         if d["shank_d"] < d["diameter"]:
             # Fusion gives the shank, not the neck under the head: where the
